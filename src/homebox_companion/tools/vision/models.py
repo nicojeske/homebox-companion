@@ -35,6 +35,7 @@ class DetectedItem(BaseModel):
     description: Annotated[str, Field(max_length=1000)] | None = None
     location_id: str | None = Field(default=None, alias="locationId")
     tag_ids: list[str] | None = Field(default=None, alias="tagIds")
+    suggested_tags: list[str] | None = Field(default=None, alias="suggestedTags")
 
     # Extended fields (can only be set via update, not create)
     manufacturer: Annotated[str, Field(max_length=255)] | None = None

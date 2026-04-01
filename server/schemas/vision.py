@@ -40,6 +40,8 @@ class DetectedItemResponse(ItemBaseMixin, ItemExtendedFieldsMixin):
     custom_fields: dict[str, str] | None = None
     # Duplicate detection - populated if serial number matches an existing item
     duplicate_match: DuplicateMatchResponse | None = None
+    # AI-suggested new tag names (not yet in Homebox)
+    suggested_tags: list[str] | None = None
 
 
 class CompressedImage(BaseModel):

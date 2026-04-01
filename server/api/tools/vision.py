@@ -197,6 +197,7 @@ async def detect_items(
             quantity=item.quantity,
             description=item.description,
             tag_ids=filter_default_tag(item.tag_ids, ctx.default_tag_id),
+            suggested_tags=item.suggested_tags,
             manufacturer=item.manufacturer,
             model_number=item.model_number,
             serial_number=item.serial_number,

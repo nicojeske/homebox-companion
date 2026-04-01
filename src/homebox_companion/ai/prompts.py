@@ -118,7 +118,8 @@ def build_item_schema(customizations: dict[str, str]) -> str:
 - name: string ({name_instr})
 - quantity: integer ({qty_instr})
 - description: string ({desc_instr})
-- tagIds: array of matching tag IDs"""
+- tagIds: array of matching tag IDs
+- suggestedTags: array of new tag name strings (only if no existing tag fits; otherwise omit)"""
 
 
 def build_extended_fields_schema(customizations: dict[str, str]) -> str:
@@ -158,14 +159,18 @@ def build_tag_prompt(tags: list[dict[str, str]] | None) -> str:
         Prompt text instructing the AI how to handle tags.
     """
     if not tags:
-        return "No tags available; omit tagIds."
+        return "No tags available. Suggest relevant new tag names in suggestedTags."
 
     tag_lines = [f"- {tag['name']} (id: {tag['id']})" for tag in tags if tag.get("id") and tag.get("name")]
 
     if not tag_lines:
-        return "No tags available; omit tagIds."
+        return "No tags available. Suggest relevant new tag names in suggestedTags."
 
-    return "TAGS - Assign matching IDs to each item:\n" + "\n".join(tag_lines)
+    return (
+        "TAGS - Assign matching IDs to each item:\n"
+        + "\n".join(tag_lines)
+        + "\nIf no existing tag fits, suggest new tag names in suggestedTags."
+    )
 
 
 def build_language_instruction(output_language: str | None) -> str:

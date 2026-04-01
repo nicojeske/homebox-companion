@@ -7,9 +7,11 @@
 	 * - QR scan button to scan pre-printed QR codes
 	 * - Parses QR URL format: https://homebox.duelion.com/a/{asset_id}
 	 */
+	import { onMount, onDestroy } from 'svelte';
 	import { QrCode } from 'lucide-svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import { resolveQrUrl } from '$lib/utils/qrUrl';
+	import { bleScanner } from '$lib/services/bleScanner.svelte';
 
 	interface Props {
 		value: string | null;
@@ -30,6 +32,15 @@
 	}: Props = $props();
 
 	let showScanner = $state(false);
+	let unsubscribeBle: (() => void) | null = null;
+
+	onMount(() => {
+		unsubscribeBle = bleScanner.onScan(handleScan);
+	});
+
+	onDestroy(() => {
+		unsubscribeBle?.();
+	});
 
 	// Extract asset ID from QR code URL or raw ID
 	function parseAssetIdFromUrl(scannedText: string): string {

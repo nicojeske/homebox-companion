@@ -24,6 +24,17 @@ class ItemInput(BaseModel):
     custom_fields: dict[str, str] | None = None
 
 
+class ItemDetailResponse(BaseModel):
+    """Simple item details for QR code lookups (Move Items feature)."""
+
+    id: str
+    name: str
+    assetId: str | None
+    thumbnailId: str | None
+    locationId: str | None
+    locationName: str | None
+
+
 class BatchCreateRequest(BaseModel):
     """Batch item creation request."""
 

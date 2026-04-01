@@ -10,7 +10,7 @@ from homebox_companion import DetectedItem, HomeboxAuthError, HomeboxClient
 from homebox_companion.homebox import ItemCreate
 
 from ..dependencies import get_client, get_token, get_valid_tag_ids, validate_file_size
-from ..schemas.items import BatchCreateRequest
+from ..schemas.items import BatchCreateRequest, ItemDetailResponse
 
 router = APIRouter()
 
@@ -204,6 +204,41 @@ async def create_items(
     )
 
 
+@router.get("/items/by-asset-id/{asset_id}")
+async def get_item_by_asset_id_route(
+    asset_id: str,
+    token: Annotated[str, Depends(get_token)],
+    client: Annotated[HomeboxClient, Depends(get_client)],
+) -> ItemDetailResponse:
+    """Fetch a single item by its asset ID.
+
+    Used by the Move Items feature to look up items from scanned QR codes.
+    Returns a simplified view including the item's current location for undo support.
+    """
+    logger.debug(f"Fetching item by asset_id={asset_id}")
+    try:
+        item = await client.get_item_by_asset_id(token, asset_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    # The asset-search endpoint omits attachments; fetch full item to get thumbnail ID
+    full_item = await client.get_item(token, item["id"])
+    primary = next(
+        (a for a in full_item.get("attachments", []) if a.get("primary")), None
+    )
+    thumbnail_id = (primary or {}).get("thumbnail", {}).get("id")
+    location = item.get("location") or {}
+
+    return ItemDetailResponse(
+        id=item["id"],
+        name=item["name"],
+        assetId=item.get("assetId"),
+        thumbnailId=thumbnail_id,
+        locationId=location.get("id"),
+        locationName=location.get("name"),
+    )
+
+
 @router.post("/items/{item_id}/attachments")
 async def upload_item_attachment(
     item_id: str,
@@ -287,6 +322,7 @@ async def update_item(
         "name": full_item.get("name"),
         "description": full_item.get("description", ""),
         "quantity": full_item.get("quantity", 1),
+        "assetId": full_item.get("assetId"),
         "locationId": full_item.get("location", {}).get("id"),
         "tagIds": [tag.get("id") for tag in full_item.get("tags", []) if tag.get("id")],
     }
@@ -298,6 +334,8 @@ async def update_item(
         update_data["name"] = request["name"]
     if "description" in request:
         update_data["description"] = request["description"]
+    if "locationId" in request:
+        update_data["locationId"] = request["locationId"]
 
     result = await client.update_item(token, item_id, update_data)
     logger.info(f"Successfully updated item {item_id}")

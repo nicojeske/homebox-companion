@@ -20,7 +20,16 @@ export interface ItemUpdateData {
 	assetId?: string | null;
 	name?: string;
 	description?: string;
-	// Add other updatable fields as needed
+	locationId?: string | null;
+}
+
+export interface ItemDetail {
+	id: string;
+	name: string;
+	assetId: string | null;
+	thumbnailId: string | null;
+	locationId: string | null;
+	locationName: string | null;
 }
 
 export const items = {
@@ -80,6 +89,13 @@ export const items = {
 		signal?: AbortSignal
 	): Promise<BlobUrlResult> =>
 		requestBlobUrl(`/items/${itemId}/attachments/${attachmentId}`, signal),
+
+	/**
+	 * Fetch a single item by its Homebox asset ID.
+	 * Used by the Move Items feature to resolve scanned QR codes to item details.
+	 */
+	getByAssetId: (assetId: string, signal?: AbortSignal) =>
+		request<ItemDetail>(`/items/by-asset-id/${encodeURIComponent(assetId)}`, { signal }),
 
 	/**
 	 * Delete an item from Homebox.

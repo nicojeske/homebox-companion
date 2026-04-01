@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { locations as locationsApi } from '$lib/api';
 	import { ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/auth.svelte';
@@ -22,6 +22,7 @@
 	import ItemPickerModal from '$lib/components/ItemPickerModal.svelte';
 	import BackLink from '$lib/components/BackLink.svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
+	import { bleScanner } from '$lib/services/bleScanner.svelte';
 	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
 	import RecoveryBanner from '$lib/components/RecoveryBanner.svelte';
 	import type { SessionSummary } from '$lib/services/sessionPersistence';
@@ -32,11 +33,14 @@
 		Package,
 		Search,
 		X,
-		QrCode,
 		Home,
 		ChevronRight,
 		FolderOpen,
 		Plus,
+		Bluetooth,
+		BluetoothOff,
+		BluetoothConnected,
+		Camera,
 	} from 'lucide-svelte';
 
 	const log = createLogger({ prefix: 'LocationPage' });
@@ -54,6 +58,9 @@
 
 	// QR Scanner state
 	let showQrScanner = $state(false);
+
+	// BLE Scanner
+	let unsubscribeScan: (() => void) | null = null;
 
 	// Session recovery state
 	let hasRecovery = $state(false);
@@ -109,6 +116,12 @@
 
 		await locationNavigator.loadTree();
 		await fetchTags();
+
+		unsubscribeScan = bleScanner.onScan(handleScan);
+	});
+
+	onDestroy(() => {
+		unsubscribeScan?.();
 	});
 
 	// Handler for pull-to-refresh: refreshes current view without resetting navigation
@@ -230,7 +243,7 @@
 		}
 	}
 
-	// QR Scanner handlers
+	// Scanner handlers (BLE + camera QR)
 	function openQrScanner() {
 		showQrScanner = true;
 	}
@@ -239,7 +252,15 @@
 		showQrScanner = false;
 	}
 
-	async function handleQrScan(decodedText: string) {
+	async function connectScanner() {
+		await bleScanner.connect();
+	}
+
+	async function disconnectScanner() {
+		await bleScanner.disconnect();
+	}
+
+	async function handleScan(decodedText: string) {
 		showQrScanner = false;
 		isProcessingQr = true;
 
@@ -300,7 +321,7 @@
 		}
 	}
 
-	function handleQrError(error: string) {
+	function handleScanError(error: string) {
 		log.warn('QR Scanner error:', error);
 	}
 
@@ -472,8 +493,67 @@
 		{:else}
 			<!-- SELECTION STATE -->
 
-			<!-- Search box with elevated style and QR scan button -->
-			<div class="mb-4 flex gap-2">
+			<!-- BLE Scanner -->
+			<div class="mb-4 rounded-2xl border border-neutral-700 bg-neutral-800/60 p-4">
+				<p class="mb-3 text-xs font-medium uppercase tracking-wider text-neutral-500">Scanner</p>
+
+				{#if !bleScanner.isSupported}
+					<div class="flex items-center gap-3 text-neutral-400">
+						<BluetoothOff size={20} class="shrink-0 text-neutral-500" />
+						<p class="text-sm">Web Bluetooth not supported. Use the camera below.</p>
+					</div>
+				{:else if bleScanner.connected}
+					<div class="flex items-center justify-between">
+						<div class="flex items-center gap-3">
+							<BluetoothConnected size={20} class="shrink-0 text-primary-400" />
+							<p class="text-sm text-neutral-200">Scanner connected</p>
+						</div>
+						<button
+							type="button"
+							onclick={disconnectScanner}
+							class="rounded-lg px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-700/50 hover:text-neutral-200"
+						>
+							Disconnect
+						</button>
+					</div>
+				{:else}
+					<div class="flex items-center justify-between">
+						<div class="flex items-center gap-3">
+							<Bluetooth size={20} class="shrink-0 text-neutral-500" />
+							<p class="text-sm text-neutral-400">
+								{bleScanner.connecting ? 'Connecting…' : 'No scanner connected'}
+							</p>
+						</div>
+						<button
+							type="button"
+							onclick={connectScanner}
+							disabled={bleScanner.connecting}
+							class="rounded-lg bg-primary-500/10 px-3 py-1.5 text-sm font-medium text-primary-400 transition-colors hover:bg-primary-500/20 disabled:opacity-50"
+						>
+							{bleScanner.connecting ? 'Connecting…' : 'Connect Scanner'}
+						</button>
+					</div>
+					{#if bleScanner.error}
+						<p class="mt-2 text-xs text-red-400">{bleScanner.error}</p>
+					{/if}
+				{/if}
+
+				<!-- Camera fallback -->
+				<div class="mt-3 border-t border-neutral-700/50 pt-3">
+					<button
+						type="button"
+						onclick={openQrScanner}
+						disabled={isProcessingQr}
+						class="flex items-center gap-2 text-sm text-neutral-400 transition-colors hover:text-neutral-200 disabled:opacity-50"
+					>
+						<Camera size={16} />
+						Scan with camera
+					</button>
+				</div>
+			</div>
+
+			<!-- Search box -->
+			<div class="mb-4">
 				<div class="relative flex-1">
 					<div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
 						<Search class="text-neutral-500" size={20} strokeWidth={1.5} />
@@ -495,23 +575,6 @@
 						</button>
 					{/if}
 				</div>
-
-				<!-- QR Scan Button -->
-				<button
-					type="button"
-					onclick={openQrScanner}
-					disabled={isProcessingQr}
-					class="flex h-12 w-12 items-center justify-center rounded-xl border border-neutral-600 bg-neutral-800 text-neutral-400 transition-all hover:border-primary-500/50 hover:bg-primary-500/5 hover:text-primary-400 disabled:opacity-50"
-					title="Scan QR Code"
-				>
-					{#if isProcessingQr}
-						<div
-							class="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent"
-						></div>
-					{:else}
-						<QrCode size={20} strokeWidth={1.5} />
-					{/if}
-				</button>
 			</div>
 
 			{#if isSearching}
@@ -714,5 +777,5 @@
 
 <!-- QR Scanner Modal -->
 {#if showQrScanner}
-	<QrScanner onScan={handleQrScan} onClose={closeQrScanner} onError={handleQrError} />
+	<QrScanner onScan={handleScan} onClose={closeQrScanner} onError={handleScanError} />
 {/if}

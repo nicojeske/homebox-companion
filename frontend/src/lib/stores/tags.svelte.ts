@@ -121,6 +121,16 @@ class TagsStore {
 	}
 
 	/**
+	 * Add a newly created tag to the local cache without re-fetching.
+	 * No-op if the tag ID is already present.
+	 */
+	addTag(tag: Tag): void {
+		if (!this._tagsById.has(tag.id)) {
+			this._tags = [...this._tags, tag];
+		}
+	}
+
+	/**
 	 * Clear the tags cache.
 	 * Called on logout or when tags might have changed.
 	 */

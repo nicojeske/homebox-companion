@@ -124,6 +124,8 @@ export interface ReviewItem extends ItemCore, ItemExtended {
 	custom_fields?: Record<string, string> | null;
 	/** Duplicate match info if serial matches an existing item */
 	duplicate_match?: DuplicateMatch | null;
+	/** AI-suggested new tag names (not yet in Homebox) */
+	suggested_tags?: string[] | null;
 }
 
 /** Item confirmed by user, ready for submission */

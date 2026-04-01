@@ -4,6 +4,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { vision } from '$lib/api/vision';
 	import { getConfig } from '$lib/api/settings';
+	import { tags as tagsApi } from '$lib/api/tags';
+	import { tagStore } from '$lib/stores/tags.svelte';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import { scanWorkflow } from '$lib/workflows/scan.svelte';
 	import { createObjectUrlManager } from '$lib/utils/objectUrl';
@@ -19,6 +21,7 @@
 		ItemCustomFields,
 		TagSelector,
 		AssetIdInput,
+		SuggestedTagChips,
 	} from '$lib/components/form';
 	import AppContainer from '$lib/components/AppContainer.svelte';
 	import ImagesPanel from '$lib/components/ImagesPanel.svelte';
@@ -264,6 +267,13 @@
 		}
 	}
 
+	/** Create a suggested tag in Homebox, add it to the store, and apply it to the current item */
+	async function acceptSuggestedTag(name: string) {
+		const newTag = await tagsApi.create({ name });
+		tagStore.addTag(newTag);
+		toggleTag(newTag.id);
+	}
+
 	/** Handle asset ID changes */
 	function handleAssetIdChange(value: string | null) {
 		if (!editedItem) return;
@@ -463,6 +473,12 @@
 
 				<!-- Tags with chip selection -->
 				<TagSelector selectedIds={editedItem.tag_ids ?? []} onToggle={toggleTag} />
+
+				<!-- AI-suggested new tags -->
+				<SuggestedTagChips
+					suggestedNames={editedItem.suggested_tags ?? []}
+					onAccept={acceptSuggestedTag}
+				/>
 
 				<!-- Extended fields panel -->
 				<ItemExtendedFields

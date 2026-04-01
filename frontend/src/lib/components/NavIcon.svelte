@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { NavItem } from '$lib/navigation/config';
-	import { ScanLine, Settings, MessageSquare } from 'lucide-svelte';
+	import { ScanLine, Settings, MessageSquare, ArrowRightLeft } from 'lucide-svelte';
 
 	interface Props {
 		icon: NavItem['icon'];
@@ -19,4 +19,6 @@
 	<Settings size={iconSize} strokeWidth={1.75} />
 {:else if icon === 'chat'}
 	<MessageSquare size={iconSize} strokeWidth={1.75} />
+{:else if icon === 'move'}
+	<ArrowRightLeft size={iconSize} strokeWidth={1.75} />
 {/if}

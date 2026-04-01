@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { Bluetooth, BluetoothOff, BluetoothConnected, Camera, MapPin, RotateCcw, Trash2, Package, ExternalLink } from 'lucide-svelte';
+	import { Bluetooth, BluetoothOff, BluetoothConnected, Camera, ChevronRight, MapPin, RotateCcw, Trash2, Package, ExternalLink } from 'lucide-svelte';
 	import AppContainer from '$lib/components/AppContainer.svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
 	import { relocateWorkflow, type MoveLogEntry } from '$lib/workflows/relocate.svelte';
 	import { locations } from '$lib/api/locations';
+	import type { LocationTreeNode } from '$lib/types';
 	import { items } from '$lib/api/items';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import { resolveQrUrl } from '$lib/utils/qrUrl';
@@ -59,6 +60,23 @@
 	const LOCATION_RE = /\/location\/([a-f0-9-]+)/i;
 	const ASSET_RE = /\/a\/([^\s/]+)/;
 
+	function findAncestors(
+		nodes: LocationTreeNode[],
+		targetId: string,
+		ancestors: string[] = []
+	): string[] | null {
+		for (const node of nodes) {
+			if (node.id === targetId) return ancestors;
+			const found = findAncestors(
+				(node.children ?? []) as LocationTreeNode[],
+				targetId,
+				[...ancestors, node.name]
+			);
+			if (found !== null) return found;
+		}
+		return null;
+	}
+
 	async function handleScan(rawText: string): Promise<void> {
 		if (isProcessingQr || relocateWorkflow.processing) return;
 		isProcessingQr = true;
@@ -71,8 +89,9 @@
 			const locationMatch = LOCATION_RE.exec(resolved);
 			if (locationMatch) {
 				const uuid = locationMatch[1];
-				const loc = await locations.get(uuid);
-				relocateWorkflow.setTargetLocation(loc.id, loc.name);
+				const [loc, tree] = await Promise.all([locations.get(uuid), locations.tree()]);
+				const ancestors = findAncestors(tree as LocationTreeNode[], uuid) ?? [];
+				relocateWorkflow.setTargetLocation(loc.id, loc.name, ancestors);
 				showToast(`Destination: ${loc.name}`, 'success');
 				return;
 			}
@@ -267,11 +286,23 @@
 
 			{#if relocateWorkflow.targetLocation}
 				<div class="flex items-center justify-between">
-					<div class="flex items-center gap-3">
+					<div class="flex min-w-0 items-center gap-3">
 						<MapPin size={20} class="shrink-0 text-primary-400" />
-						<span class="text-base font-medium text-neutral-100">
-							{relocateWorkflow.targetLocation.name}
-						</span>
+						<div class="min-w-0">
+							{#if relocateWorkflow.targetLocationPath.length > 0}
+								<p class="mb-0.5 flex flex-wrap items-center gap-x-1 text-xs text-neutral-400">
+									{#each relocateWorkflow.targetLocationPath as ancestor, i}
+										{#if i > 0}
+											<ChevronRight size={12} class="shrink-0 text-neutral-600" />
+										{/if}
+										<span>{ancestor}</span>
+									{/each}
+								</p>
+							{/if}
+							<span class="text-base font-medium text-neutral-100">
+								{relocateWorkflow.targetLocation.name}
+							</span>
+						</div>
 					</div>
 					<button
 						type="button"

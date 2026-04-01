@@ -43,6 +43,9 @@ class RelocateWorkflow {
 	/** The destination location for the next item scan(s). Null until a location is scanned. */
 	targetLocation = $state<{ id: string; name: string } | null>(null);
 
+	/** Ancestor names for the target location, ordered from root to immediate parent. */
+	targetLocationPath = $state<string[]>([]);
+
 	/** Session move log, newest entry first. */
 	moveLog = $state<MoveLogEntry[]>([]);
 
@@ -56,14 +59,16 @@ class RelocateWorkflow {
 	// LOCATION
 	// ---------------------------------------------------------------------------
 
-	setTargetLocation(id: string, name: string): void {
+	setTargetLocation(id: string, name: string, path: string[] = []): void {
 		this.targetLocation = { id, name };
+		this.targetLocationPath = path;
 		this.error = null;
 		log.info(`Target location set: ${name} (${id})`);
 	}
 
 	clearTargetLocation(): void {
 		this.targetLocation = null;
+		this.targetLocationPath = [];
 	}
 
 	// ---------------------------------------------------------------------------

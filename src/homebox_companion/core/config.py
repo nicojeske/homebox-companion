@@ -29,6 +29,12 @@ Environment Variables:
     HBC_CHAT_ENABLED: Enable the conversational assistant (default: true)
     HBC_CHAT_MAX_HISTORY: Max messages in conversation context (default: 20)
     HBC_CHAT_APPROVAL_TIMEOUT: Seconds before pending approvals expire (default: 300)
+    HBC_TOKEN_CACHE_TTL: Seconds to cache a validated token before re-checking with Homebox
+        (default: 300). Increase to reduce re-validation load, e.g. 86400 for 24 hours.
+    HBC_AUTH_DISABLED: Skip companion-side Homebox token re-validation (default: false).
+        Token is still required in the Authorization header and forwarded to Homebox for
+        API calls. Use when the app is behind a trusted reverse proxy (e.g. Entra ID SSO)
+        and spurious 401s from re-validation are disrupting the workflow.
 
 AI Output Customization env vars (HBC_AI_*) are handled separately in
 field_preferences.py via FieldPreferencesDefaults.
@@ -137,6 +143,12 @@ class Settings(BaseSettings):
 
     # Auth rate limiting (brute-force protection)
     auth_rate_limit_rpm: int = 10  # Login attempts per minute per IP
+
+    # Token validation cache TTL — seconds to trust a validated token before re-checking Homebox
+    token_cache_ttl: int = 300  # HBC_TOKEN_CACHE_TTL (default: 5 min)
+
+    # Skip companion-side Homebox re-validation — token still required and forwarded to Homebox
+    auth_disabled: bool = False  # HBC_AUTH_DISABLED
 
     # Chat rate limiting (LLM cost / abuse protection)
     chat_rate_limit_rpm: int = 20  # Chat messages per minute per IP (0 = disabled)

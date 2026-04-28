@@ -268,8 +268,8 @@ class TokenValidator:
             self._cache.clear()
 
 
-# Singleton token validator
-token_validator = TokenValidator()
+# Singleton token validator — TTL configurable via HBC_TOKEN_CACHE_TTL
+token_validator = TokenValidator(ttl=settings.token_cache_ttl)
 
 
 # =============================================================================
@@ -301,6 +301,10 @@ async def get_token(
         raise HTTPException(status_code=401, detail="Invalid authorization format")
 
     raw_token = authorization[7:]
+
+    # Skip companion-side re-validation when disabled (token still forwarded to Homebox)
+    if settings.auth_disabled:
+        return raw_token
 
     # Check cache first — skip Homebox call if recently validated
     if token_validator.is_cached(raw_token):

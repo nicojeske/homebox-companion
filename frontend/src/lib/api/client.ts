@@ -9,6 +9,47 @@ import { refreshToken } from '../services/tokenRefresh';
 
 const BASE_URL = '/api';
 
+// =============================================================================
+// COLLECTION CONTEXT (module-level value, set by collectionStore)
+// =============================================================================
+//
+// The collectionStore syncs the active group ID here via setActiveGroupId().
+// This avoids the circular dep: collectionStore → api/groups.ts → client.ts.
+// No store reference needed — just a plain string value.
+// =============================================================================
+
+let _activeGroupId: string | null = null;
+
+/**
+ * Set the active group ID for X-Group-Id header injection.
+ * Called from collectionStore whenever the selection changes.
+ */
+export function setActiveGroupId(id: string | null): void {
+	_activeGroupId = id;
+}
+
+function getActiveGroupId(): string | null {
+	return _activeGroupId;
+}
+
+// =============================================================================
+// SHARED HEADER BUILDER
+// =============================================================================
+
+/**
+ * Build auth + context headers for all API requests.
+ * Single source of truth for Authorization and X-Group-Id injection.
+ */
+function buildAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+	const headers: Record<string, string> = {};
+	const token = authStore.token;
+	if (token) headers['Authorization'] = `Bearer ${token}`;
+	const groupId = getActiveGroupId();
+	if (groupId) headers['X-Group-Id'] = groupId;
+	if (extra) Object.assign(headers, extra);
+	return headers;
+}
+
 /**
  * Default request timeout in milliseconds.
  * Applies when no AbortSignal is provided by the caller.
@@ -145,17 +186,25 @@ async function handleUnauthorized(response: Response): Promise<boolean> {
 
 	if (!authStore.token) {
 		// No token - user isn't logged in, nothing to do
+		log.debug('[AUTH 401] No token present, skipping unauthorized handling');
 		return false;
 	}
+
+	log.info(
+		`[AUTH 401] Received 401 from ${response.url}, ` +
+			`attempting token refresh. Token expiry: ${authStore.expiresAt?.toISOString() ?? 'unknown'}`
+	);
 
 	// Token exists but was rejected - try to refresh
 	const refreshSucceeded = await attemptRefreshOnce();
 	if (!refreshSucceeded) {
 		// Refresh failed - show re-auth modal
+		log.warn('[AUTH 401] Refresh failed after 401, marking session expired');
 		authStore.markSessionExpired();
 		return false;
 	}
 
+	log.debug('[AUTH 401] Refresh succeeded, will retry original request');
 	// Refresh succeeded - caller should retry the request
 	return true;
 }
@@ -271,22 +320,13 @@ export interface RequestOptions extends RequestInit {
 export async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
 	const timeoutMs = options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
-	// Helper to build headers with current token
-	const buildHeaders = (): HeadersInit => {
-		const authToken = authStore.token;
-		const headers: HeadersInit = {
-			...options.headers,
-		};
-
-		if (authToken) {
-			(headers as Record<string, string>)['Authorization'] = `Bearer ${authToken}`;
-		}
-
-		if (options.body && typeof options.body === 'string') {
-			(headers as Record<string, string>)['Content-Type'] = 'application/json';
-		}
-
-		return headers;
+	// Build headers with current token, group context, and request-specific extras
+	const getHeaders = (): HeadersInit => {
+		const extra: Record<string, string> = {};
+		if (options.headers) Object.assign(extra, options.headers);
+		if (options.body && typeof options.body === 'string')
+			extra['Content-Type'] = 'application/json';
+		return buildAuthHeaders(Object.keys(extra).length > 0 ? extra : undefined);
 	};
 
 	// Create signal with default timeout, combining with caller's signal if provided
@@ -300,7 +340,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {})
 	try {
 		response = await fetch(`${BASE_URL}${endpoint}`, {
 			...options,
-			headers: buildHeaders(),
+			headers: getHeaders(),
 			signal,
 		});
 	} catch (error) {
@@ -325,7 +365,7 @@ export async function request<T>(endpoint: string, options: RequestOptions = {})
 			try {
 				response = await fetch(`${BASE_URL}${endpoint}`, {
 					...options,
-					headers: buildHeaders(),
+					headers: getHeaders(),
 					signal: retrySignal,
 				});
 			} catch (error) {
@@ -441,11 +481,8 @@ export async function requestBlobUrl(
 		options instanceof AbortSignal ? { signal: options } : (options ?? {});
 	const timeoutMs = opts.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
-	// Helper to build headers with current token
-	const buildHeaders = (): HeadersInit => {
-		const authToken = authStore.token;
-		return authToken ? { Authorization: `Bearer ${authToken}` } : {};
-	};
+	// Build headers using shared builder (no extra headers for blob requests)
+	const getHeaders = (): HeadersInit => buildAuthHeaders();
 
 	// Create signal with default timeout, combining with caller's signal if provided
 	const signal =
@@ -457,7 +494,7 @@ export async function requestBlobUrl(
 	let response: Response;
 	try {
 		response = await fetch(`${BASE_URL}${endpoint}`, {
-			headers: buildHeaders(),
+			headers: getHeaders(),
 			signal,
 		});
 	} catch (error) {
@@ -480,7 +517,7 @@ export async function requestBlobUrl(
 			log.debug(`Retrying blob request ${endpoint} after token refresh`);
 			try {
 				response = await fetch(`${BASE_URL}${endpoint}`, {
-					headers: buildHeaders(),
+					headers: getHeaders(),
 					signal: retrySignal,
 				});
 			} catch (error) {
@@ -525,22 +562,8 @@ export async function requestFormData<T>(
 	const errorMessage = options.errorMessage ?? 'Request failed';
 	const timeoutMs = options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
-	// Helper to build headers with current token and any additional headers
-	const buildHeaders = (): HeadersInit => {
-		const authToken = authStore.token;
-		const headers: Record<string, string> = {};
-
-		if (authToken) {
-			headers['Authorization'] = `Bearer ${authToken}`;
-		}
-
-		// Merge any additional headers from options
-		if (options.headers) {
-			Object.assign(headers, options.headers);
-		}
-
-		return headers;
-	};
+	// Build headers using shared builder with any additional caller headers
+	const getHeaders = (): HeadersInit => buildAuthHeaders(options.headers);
 
 	// Create signal with default timeout, combining with caller's signal if provided
 	const signal =
@@ -554,7 +577,7 @@ export async function requestFormData<T>(
 		log.debug(`FormData request to ${endpoint}`);
 		response = await fetch(`${BASE_URL}${endpoint}`, {
 			method: 'POST',
-			headers: buildHeaders(),
+			headers: getHeaders(),
 			body: formData,
 			signal,
 		});
@@ -581,7 +604,7 @@ export async function requestFormData<T>(
 			try {
 				response = await fetch(`${BASE_URL}${endpoint}`, {
 					method: 'POST',
-					headers: buildHeaders(),
+					headers: getHeaders(),
 					body: formData,
 					signal: retrySignal,
 				});

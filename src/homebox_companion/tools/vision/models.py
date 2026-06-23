@@ -33,7 +33,7 @@ class DetectedItem(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=255)]
     quantity: int = Field(default=1, ge=1)
     description: Annotated[str, Field(max_length=1000)] | None = None
-    location_id: str | None = Field(default=None, alias="locationId")
+    parent_id: str | None = Field(default=None, alias="parentId")
     tag_ids: list[str] | None = Field(default=None, alias="tagIds")
     suggested_tags: list[str] | None = Field(default=None, alias="suggestedTags")
 
@@ -135,7 +135,7 @@ def _build_cached_list_adapter(
 ) -> TypeAdapter:
     """Cached TypeAdapter[list[DynamicDetectedItem]] factory."""
     model = _build_cached_model(cache_key)
-    return TypeAdapter(list[model])  # type: ignore[invalid-type-form]
+    return TypeAdapter(list[model])  # type: ignore[invalid-type-form]  # ty: ignore[invalid-type-form]
 
 
 @lru_cache(maxsize=4)

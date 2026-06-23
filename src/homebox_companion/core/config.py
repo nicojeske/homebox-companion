@@ -35,6 +35,8 @@ Environment Variables:
         Token is still required in the Authorization header and forwarded to Homebox for
         API calls. Use when the app is behind a trusted reverse proxy (e.g. Entra ID SSO)
         and spurious 401s from re-validation are disrupting the workflow.
+    HBC_PRINT_ENABLED: Enable the print label button in the UI (default: false).
+        Requires HBOX_LABEL_MAKER_PRINT_COMMAND to be configured on the Homebox server.
 
 AI Output Customization env vars (HBC_AI_*) are handled separately in
 field_preferences.py via FieldPreferencesDefaults.
@@ -152,6 +154,9 @@ class Settings(BaseSettings):
 
     # Chat rate limiting (LLM cost / abuse protection)
     chat_rate_limit_rpm: int = 20  # Chat messages per minute per IP (0 = disabled)
+
+    # Label printing configuration
+    print_enabled: bool = False  # Enable server-side label printing via Homebox labelmaker
 
     @computed_field
     @property

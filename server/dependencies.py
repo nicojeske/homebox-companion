@@ -288,12 +288,14 @@ def get_client() -> HomeboxClient:
 
 async def get_token(
     authorization: Annotated[str | None, Header()] = None,
-    client: Annotated[HomeboxClient, Depends(get_client)] = None,
 ) -> str:
-    """Extract and validate bearer token from Authorization header.
+    """Extract bearer token from Authorization header.
 
-    Validates the token against Homebox on first use, then caches the
-    result for subsequent requests (TTL-based expiration).
+    Validated tokens are cached with a TTL (HBC_TOKEN_CACHE_TTL) so repeat
+    requests skip the Homebox re-check, which avoids the false 401s caused by
+    network blips during per-request pre-validation (the root cause of issue
+    #117). Set HBC_AUTH_DISABLED=true to skip companion-side re-validation
+    entirely — the token is still forwarded to Homebox on every API call.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
@@ -353,7 +355,7 @@ def get_session(
 
 
 def require_auth(token: Annotated[str, Depends(get_token)]) -> None:
-    """Dependency that validates authentication without returning the token.
+    """Dependency that requires a bearer token without returning it.
 
     Use this when a route needs authentication but doesn't use the token directly.
     This avoids injecting unused dependencies and makes intent clear.
@@ -363,7 +365,7 @@ def require_auth(token: Annotated[str, Depends(get_token)]) -> None:
         async def protected_route() -> dict:
             return {"status": "authenticated"}
     """
-    # Token validation happens in get_token; explicitly acknowledge unused param
+    # get_token extracts the bearer token; Homebox validates on actual API calls
     _ = token
 
 

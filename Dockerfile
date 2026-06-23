@@ -1,5 +1,5 @@
 # Stage 1: Build frontend
-FROM node:22-alpine AS frontend-builder
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install --silent --no-progress 2>/dev/null
@@ -7,20 +7,27 @@ COPY frontend/ ./
 RUN npm run build --silent 2>/dev/null
 
 # Stage 2: Python runtime
-FROM python:3.12-slim
+FROM python:3.14-slim@sha256:5b3879b6f3cb77e712644d50262d05a7c146b7312d784a18eff7ff5462e77033
 WORKDIR /app
 
-# Install uv for dependency management and curl for health checks
+# Install curl for health checks and uv for dependency management
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -q uv
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy Python project files
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+# Copy Python project files for dependency installation
 COPY pyproject.toml uv.lock ./
+
+# Install external dependencies first (cached)
+RUN uv sync --no-dev --no-install-project --quiet
+
+# Copy source code
 COPY src/ ./src/
 COPY server/ ./server/
 
-# Install Python dependencies
+# Final sync to install the project itself
 RUN uv sync --no-dev --quiet
 
 # Copy built frontend to server static directory

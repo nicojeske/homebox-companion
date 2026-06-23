@@ -1,0 +1,53 @@
+name: Sync fork with upstream
+
+# Keeps this fork's `main` up to date with Duelion/homebox-companion.
+# Runs daily and can be triggered manually. On a clean merge it pushes to
+# `main`; if upstream changes conflict with the fork's custom commits, the
+# run fails so the owner is emailed and can resolve the merge by hand.
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # 05:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/Duelion/homebox-companion.git
+          git fetch upstream
+
+      - name: Merge upstream/main and push
+        run: |
+          if git merge --no-edit upstream/main; then
+            if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+              echo "Merged upstream changes — pushing to origin/main."
+              git push origin main
+            else
+              echo "Already up to date with upstream."
+            fi
+          else
+            git merge --abort
+            echo "::error::Merge conflict with upstream/main — resolve manually (see RELOCATE/AGENTS workflow)."
+            exit 1
+          fi

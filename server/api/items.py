@@ -1,5 +1,6 @@
 """Items API routes."""
 
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -8,19 +9,38 @@ from loguru import logger
 
 from homebox_companion import DetectedItem, HomeboxAuthError, HomeboxClient, settings
 from homebox_companion.ai.images import compress_image_for_upload
+from homebox_companion.core.exceptions import HomeboxAPIError
 from homebox_companion.homebox import ItemCreate
 
 from ..dependencies import get_client, get_token, get_valid_tag_ids, validate_file_size
 from ..schemas.items import (
+    AttachmentUpdateRequest,
     BatchCreateRequest,
+    ItemAttachmentRef,
     ItemDetailResponse,
+    ItemFieldValue,
     ItemListResponse,
     ItemLocationRef,
+    ItemParentRef,
+    ItemPathSegment,
+    ItemQrLookupResponse,
     ItemSearchResult,
     ItemTagRef,
+    ItemUpdateRequest,
 )
 
 router = APIRouter()
+
+
+def _resolve_parent_ref(raw: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a raw Homebox item dict's parent, handling the 0.26 rename.
+
+    Homebox 0.26 returns an item's container under 'parent' on most endpoints
+    (GET /entities/{id}, GET /entities list), but the asset-search endpoint
+    (GET /assets/{assetId}) still uses 'location'. Every read site that needs
+    "where is this item" should go through here rather than re-deriving it.
+    """
+    return raw.get("parent") or raw.get("location") or {}
 
 
 def _build_search_result(item: dict[str, Any]) -> ItemSearchResult:
@@ -28,7 +48,7 @@ def _build_search_result(item: dict[str, Any]) -> ItemSearchResult:
     an ItemSearchResult, resolving the 0.26 'parent' field (renamed from
     'location') the same way homebox_companion.homebox.views does.
     """
-    parent = item.get("parent") or item.get("location") or {}
+    parent = _resolve_parent_ref(item)
     location = ItemLocationRef(id=parent["id"], name=parent.get("name", "")) if parent.get("id") else None
     tags = [
         ItemTagRef(id=tag["id"], name=tag.get("name", "")) for tag in item.get("tags", []) if tag.get("id")
@@ -39,10 +59,168 @@ def _build_search_result(item: dict[str, Any]) -> ItemSearchResult:
         description=item.get("description"),
         quantity=item.get("quantity", 1),
         assetId=item.get("assetId"),
-        thumbnailId=item.get("thumbnailId"),
+        # Confirmed live against Homebox 0.26.1: an item's thumbnail (the primary
+        # attachment's id) is returned as 'imageId', not 'thumbnailId' — the latter
+        # never existed on a real response, so browse's thumbnails never loaded.
+        thumbnailId=item.get("imageId"),
         location=location,
         tags=tags,
         updatedAt=item.get("updatedAt"),
+    )
+
+
+def _merge_custom_fields(
+    baseline_fields: list[dict[str, Any]] | None,
+    changes: dict[str, str | None] | None,
+) -> list[dict[str, Any]]:
+    """Merge a partial {display_name: value} overlay onto Homebox's raw 'fields' list.
+
+    - `changes` is None → the baseline is returned verbatim (untouched, including
+      non-text fields' numberValue/booleanValue/id — never rebuilt through
+      HomeboxItemField, which would downgrade them to type="text").
+    - A name matching an existing entry → only its textValue is updated, the rest
+      of that entry (id, type, other typed values) is preserved.
+    - A name with no existing entry → appended as a new text field.
+    - A None or empty-string value → that entry is dropped.
+    - Baseline entries whose name isn't mentioned in `changes` are left untouched,
+      which is what keeps fields outside the app's known custom-field definitions
+      from being silently dropped.
+    """
+    baseline = list(baseline_fields or [])
+    if changes is None:
+        return baseline
+
+    result = [dict(entry) for entry in baseline]
+    for name, value in changes.items():
+        existing = next((entry for entry in result if entry.get("name") == name), None)
+        if not value:
+            if existing is not None:
+                result.remove(existing)
+            continue
+        if existing is not None:
+            existing["textValue"] = value
+        else:
+            from homebox_companion.tools.vision.models import HomeboxItemField
+
+            result.append(HomeboxItemField(name=name, textValue=value).model_dump(by_alias=True))
+    return result
+
+
+def _build_item_update_payload(full_item: dict[str, Any], changes: ItemUpdateRequest) -> dict[str, Any]:
+    """Build the full-replace PUT payload for an item: baseline from the current
+    item, overlaid with only the fields the caller actually set.
+
+    Homebox's PUT is a full replace, so every field it recognizes must be present
+    in the payload — including ones the caller didn't touch — or it gets cleared.
+    """
+    parent = _resolve_parent_ref(full_item)
+    payload: dict[str, Any] = {
+        "name": full_item.get("name") or "",
+        "description": full_item.get("description") or "",
+        "quantity": full_item.get("quantity", 1),
+        "assetId": full_item.get("assetId"),
+        "parentId": parent.get("id"),
+        "tagIds": [tag.get("id") for tag in (full_item.get("tags") or []) if tag.get("id")],
+        "manufacturer": full_item.get("manufacturer"),
+        "modelNumber": full_item.get("modelNumber"),
+        "serialNumber": full_item.get("serialNumber"),
+        "purchasePrice": full_item.get("purchasePrice"),
+        "purchaseFrom": full_item.get("purchaseFrom"),
+        "notes": full_item.get("notes"),
+        "insured": full_item.get("insured", False),
+        "archived": full_item.get("archived", False),
+        "fields": full_item.get("fields") or [],
+    }
+
+    overlay = changes.model_dump(by_alias=True, exclude_unset=True)
+    field_changes = overlay.pop("fields", None)
+    payload.update(overlay)
+    payload["fields"] = _merge_custom_fields(full_item.get("fields"), field_changes)
+
+    return payload
+
+
+async def _get_item_or_404(client: HomeboxClient, token: str, item_id: str) -> dict[str, Any]:
+    """Fetch a full item, mapping a Homebox 404 to a companion 404.
+
+    `HomeboxAPIError` is otherwise handled globally (server/app.py) and returned
+    as a 502 regardless of Homebox's actual status — that's the right default
+    for genuine upstream errors, but a missing item deserves its own 404.
+    """
+    try:
+        return await client.get_item(token, item_id)
+    except HomeboxAPIError as e:
+        if e.context.get("status_code") == 404:
+            raise HTTPException(status_code=404, detail="Item not found") from e
+        raise
+
+
+def _build_item_detail(full_item: dict[str, Any], raw_path: list[dict[str, Any]]) -> ItemDetailResponse:
+    """Project a raw Homebox item (+ its path) into the full detail response.
+
+    `raw_path` is expected to include the item itself as its last entry
+    (confirmed live against Homebox 0.26.1) — that entry is dropped for the
+    breadcrumb, which is why this always slices off the last element rather
+    than filtering by the path segment's `type` (which mislabels the item's
+    own entry as "location" too, so `type` cannot be used to identify it).
+    """
+    parent_raw = _resolve_parent_ref(full_item)
+    parent = None
+    if parent_raw.get("id"):
+        entity_type = parent_raw.get("entityType") or {}
+        parent = ItemParentRef(
+            id=parent_raw["id"],
+            name=parent_raw.get("name", ""),
+            isLocation=entity_type.get("isLocation", True),
+        )
+
+    tags = [
+        ItemTagRef(id=tag["id"], name=tag.get("name", "")) for tag in full_item.get("tags", []) if tag.get("id")
+    ]
+    fields = [
+        ItemFieldValue(name=f.get("name", ""), type=f.get("type", "text"), textValue=f.get("textValue"))
+        for f in full_item.get("fields", [])
+    ]
+    attachments = [
+        ItemAttachmentRef(
+            id=a["id"],
+            title=a.get("title", ""),
+            type=a.get("type", "photo"),
+            primary=a.get("primary", False),
+            mimeType=a.get("mimeType"),
+            createdAt=a.get("createdAt"),
+        )
+        for a in full_item.get("attachments", [])
+        if a.get("id")
+    ]
+    # Confirmed live: the primary attachment's id is returned as the item's top-level
+    # 'imageId', not nested under attachments[].thumbnail.id (that key doesn't exist).
+    thumbnail_id = full_item.get("imageId")
+
+    path = [ItemPathSegment(id=seg["id"], name=seg.get("name", "")) for seg in raw_path[:-1]]
+
+    return ItemDetailResponse(
+        id=full_item["id"],
+        name=full_item.get("name", ""),
+        description=full_item.get("description"),
+        quantity=full_item.get("quantity", 1),
+        assetId=full_item.get("assetId"),
+        insured=full_item.get("insured", False),
+        archived=full_item.get("archived", False),
+        manufacturer=full_item.get("manufacturer"),
+        modelNumber=full_item.get("modelNumber"),
+        serialNumber=full_item.get("serialNumber"),
+        purchasePrice=full_item.get("purchasePrice"),
+        purchaseFrom=full_item.get("purchaseFrom"),
+        notes=full_item.get("notes"),
+        parent=parent,
+        tags=tags,
+        fields=fields,
+        attachments=attachments,
+        thumbnailId=thumbnail_id,
+        path=path,
+        createdAt=full_item.get("createdAt"),
+        updatedAt=full_item.get("updatedAt"),
     )
 
 
@@ -249,7 +427,7 @@ async def get_item_by_asset_id_route(
     asset_id: str,
     token: Annotated[str, Depends(get_token)],
     client: Annotated[HomeboxClient, Depends(get_client)],
-) -> ItemDetailResponse:
+) -> ItemQrLookupResponse:
     """Fetch a single item by its asset ID.
 
     Used by the Move Items feature to look up items from scanned QR codes.
@@ -261,15 +439,17 @@ async def get_item_by_asset_id_route(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    # The asset-search endpoint omits attachments; fetch full item to get thumbnail ID
+    # The asset-search endpoint omits attachments; fetch full item to get thumbnail ID.
+    # Also derive location from here rather than `item`: GET /assets/{id} returns 'parent',
+    # not 'location' (confirmed live), so reading item.get("location") was always empty —
+    # this silently broke the Move Items feature's undo (previousLocationId was always None).
     full_item = await client.get_item(token, item["id"])
-    primary = next(
-        (a for a in full_item.get("attachments", []) if a.get("primary")), None
-    )
-    thumbnail_id = (primary or {}).get("thumbnail", {}).get("id")
-    location = item.get("location") or {}
+    # Confirmed live: the primary attachment's id is the item's top-level 'imageId',
+    # not nested under attachments[].thumbnail.id (that key doesn't exist).
+    thumbnail_id = full_item.get("imageId")
+    location = _resolve_parent_ref(full_item)
 
-    return ItemDetailResponse(
+    return ItemQrLookupResponse(
         id=item["id"],
         name=item["name"],
         assetId=item.get("assetId"),
@@ -342,44 +522,104 @@ async def get_item_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found") from e
 
 
+@router.put("/items/{item_id}/attachments/{attachment_id}")
+async def update_item_attachment(
+    item_id: str,
+    attachment_id: str,
+    request: AttachmentUpdateRequest,
+    token: Annotated[str, Depends(get_token)],
+    client: Annotated[HomeboxClient, Depends(get_client)],
+) -> dict[str, Any]:
+    """Update an attachment's metadata — used to set/unset it as the item's primary photo."""
+    full_item = await _get_item_or_404(client, token, item_id)
+    current = next((a for a in full_item.get("attachments", []) if a.get("id") == attachment_id), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    title = request.title if request.title is not None else current.get("title", "")
+    logger.info(f"Updating attachment {attachment_id} on item {item_id} (primary={request.primary})")
+    result = await client.update_attachment(token, item_id, attachment_id, title=title, primary=request.primary)
+    return result
+
+
+@router.delete("/items/{item_id}/attachments/{attachment_id}")
+async def delete_item_attachment(
+    item_id: str,
+    attachment_id: str,
+    token: Annotated[str, Depends(get_token)],
+    client: Annotated[HomeboxClient, Depends(get_client)],
+) -> dict[str, str]:
+    """Delete an attachment from an item."""
+    logger.info(f"Deleting attachment {attachment_id} from item {item_id}")
+    try:
+        await client.delete_attachment(token, item_id, attachment_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="Attachment not found") from e
+    return {"message": "Attachment deleted"}
+
+
+# NOTE: Must be declared after /items/by-asset-id/{asset_id} and the /items/{item_id}/attachments*
+# routes above — otherwise their literal path segments would be swallowed by this {item_id} route.
+@router.get("/items/{item_id}")
+async def get_item_detail(
+    item_id: str,
+    token: Annotated[str, Depends(get_token)],
+    client: Annotated[HomeboxClient, Depends(get_client)],
+) -> ItemDetailResponse:
+    """Fetch full item details for the item detail/edit page.
+
+    Deferred from M1 (browse/search) — nothing consumed it until this page existed.
+    Fetches the item and its breadcrumb path concurrently; a failure to fetch the
+    path degrades to an empty breadcrumb rather than failing the whole request,
+    since it's a nice-to-have on a route with no prior consumer to have exercised it.
+    """
+    logger.debug(f"Fetching item detail: {item_id}")
+
+    full_item, path_result = await asyncio.gather(
+        _get_item_or_404(client, token, item_id),
+        client.get_item_path(token, item_id),
+        return_exceptions=True,
+    )
+    if isinstance(full_item, BaseException):
+        raise full_item
+
+    raw_path: list[dict[str, Any]] = []
+    if isinstance(path_result, BaseException):
+        logger.warning(f"Failed to fetch item path for {item_id}, breadcrumb will be empty: {path_result}")
+    else:
+        raw_path = path_result
+
+    return _build_item_detail(full_item, raw_path)
+
+
 @router.put("/items/{item_id}")
 async def update_item(
     item_id: str,
-    request: dict[str, Any],
+    request: ItemUpdateRequest,
     token: Annotated[str, Depends(get_token)],
     client: Annotated[HomeboxClient, Depends(get_client)],
 ) -> dict[str, Any]:
     """Update an existing item in Homebox.
 
-    Used to set asset ID after item creation (since asset ID cannot be set during creation).
-    Fetches the full item first to merge with update data.
+    Homebox's PUT is a full replace, so the current item is fetched first and only
+    the fields the caller actually set (`model_fields_set`) are overlaid onto it —
+    see `_build_item_update_payload`. Unknown request keys 422 (`extra="forbid"`
+    on `ItemUpdateRequest`) rather than being silently dropped, and tag IDs are
+    filtered against Homebox's known set the same way item creation already does.
     """
     logger.info(f"Updating item: {item_id}")
-    logger.debug(f"Update data: {request}")
+    logger.debug(f"Update data: {request.model_dump(by_alias=True, exclude_unset=True)}")
 
-    # Fetch current item to get required fields
-    full_item = await client.get_item(token, item_id)
+    full_item = await _get_item_or_404(client, token, item_id)
+    update_data = _build_item_update_payload(full_item, request)
 
-    # Build update payload with current values + updates
-    update_data = {
-        "name": full_item.get("name"),
-        "description": full_item.get("description", ""),
-        "quantity": full_item.get("quantity", 1),
-        "assetId": full_item.get("assetId"),
-        "locationId": full_item.get("location", {}).get("id"),
-        "parentId": full_item.get("parent", {}).get("id"),
-        "tagIds": [tag.get("id") for tag in full_item.get("tags", []) if tag.get("id")],
-    }
-
-    # Apply requested updates (convert snake_case to camelCase for Homebox API)
-    if "assetId" in request:
-        update_data["assetId"] = request["assetId"]
-    if "name" in request:
-        update_data["name"] = request["name"]
-    if "description" in request:
-        update_data["description"] = request["description"]
-    if "locationId" in request:
-        update_data["locationId"] = request["locationId"]
+    if request.tag_ids is not None:
+        valid_tag_ids = await get_valid_tag_ids(token, client)
+        filtered = [tid for tid in request.tag_ids if tid in valid_tag_ids]
+        filtered_count = len(request.tag_ids) - len(filtered)
+        if filtered_count > 0:
+            logger.warning(f"Filtered out {filtered_count} invalid tag ID(s) updating item {item_id}")
+        update_data["tagIds"] = filtered
 
     result = await client.update_item(token, item_id, update_data)
     logger.info(f"Successfully updated item {item_id}")

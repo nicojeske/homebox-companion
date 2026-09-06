@@ -1,80 +1,136 @@
 # M2 — Item Detail & Full Editing
 
-Status: 📋 Planned · Depends on: M1 · Blocks: M3, M4, M5
+Status: ✅ Done · Depends on: M1 · Blocks: M3, M4, M5
 
 ## Overview
 
-`/items/[id]` — view and edit every field of an existing Homebox item. Today `PUT /api/items/{item_id}`
-(`server/api/items.py:305`) silently drops every field except `assetId`, `name`, `description`,
-`locationId` — anything else sent is discarded on the fetch-then-merge. This milestone widens that endpoint
-to the full field set and builds a detail/edit page on top of it, reusing the existing shared form
-components built for the review page and chat approval panel.
+`/items/[id]` — view and edit every field of an existing Homebox item. `PUT /api/items/{item_id}`
+(`server/api/items.py`, previously line 305, now the widened handler) used to silently drop every field
+except `assetId`, `name`, `description`, `locationId` — anything else sent was discarded on the
+fetch-then-merge. This milestone widened that endpoint to the full field set and built a detail/edit page
+on top of it, reusing the shared form components built for the review page and chat approval panel.
+
+Tracing the old PUT handler surfaced **three latent bugs** in the same code family — all variations of the
+Homebox 0.26 `location` → `parent` field rename that M1 handled on the read path (`_build_search_result`)
+but that had never been applied to the update or asset-lookup paths:
+
+1. **`locationId` never reached Homebox.** The handler set `locationId` in the outbound payload but left
+   `parentId` pointing at the old parent. Homebox 0.26 moves items via `parentId` only — confirmed live: a
+   PUT with both keys set to different locations landed at the `parentId` value, `locationId` fully ignored.
+   Every move through this endpoint (including every `relocateWorkflow` move) was a silent no-op.
+2. **The PUT wiped custom fields.** The outbound payload never included `fields`. Confirmed live: setting a
+   custom field, then PUTting again without `fields`, wiped it (`fields: []` on re-fetch).
+3. **Asset-ID lookup always reported no location.** `GET /items/by-asset-id/{asset_id}` read
+   `item.get("location")`, but Homebox 0.26's `/assets/{assetId}` returns `parent`, not `location` (confirmed
+   live) — so `locationId`/`locationName` were always `null`. Since bug #1 was silently swallowing moves
+   anyway, this masked a second failure: `relocateWorkflow`'s undo reads `previousLocationId` from this same
+   response, so **fixing bug #1 without also fixing bug #3 would have made Undo start actively moving items
+   to root** instead of a no-op. Both shipped in the same change.
+
+A fourth bug was found during end-to-end verification, unrelated to the three above: **item thumbnails never
+loaded**, on this page or on M1's `/browse`. `_build_search_result` (and the by-asset-id/detail routes) read
+`item.get("thumbnailId")`, but Homebox 0.26.1 returns the primary attachment's id as a top-level `imageId` —
+`thumbnailId` never existed on a real response. Fixed in all three read sites; M1's `test_items_search.py`
+fixture had fabricated a `thumbnailId` key that was never verified against live Homebox for this field
+specifically (only the `parent`/`location` rename was).
 
 ## Architecture
 
 ### Backend
 
-| Change | File | Notes |
-|--------|------|-------|
-| Widen `PUT /api/items/{item_id}` | `server/api/items.py` | Accept `quantity`, `tagIds`, `manufacturer`, `modelNumber`, `serialNumber`, `purchasePrice`, `purchaseFrom`, `notes`, `insured`, `parentId`, custom `fields`. Keep the fetch-then-merge pattern (Homebox PUT is a full replace), but drive it from an explicit `ItemUpdateRequest` pydantic schema instead of `dict[str, Any]` so unknown keys are rejected rather than silently dropped. |
-| New `GET /api/items/{item_id}` | `server/api/items.py` | **Picked up from M1** (deferred there — nothing consumed it yet). Wraps `client.get_item()` + `client.get_item_path()` for breadcrumb. Build the response schema here, once the detail page's actual needs (attachments, custom fields, path) are known — don't reuse M1's `ItemSearchResult`, it's a lighter projection for list rows. |
-| New client methods | `src/homebox_companion/homebox/client.py` | `delete_attachment()`, `update_attachment()` (`DELETE`/`PUT /entities/{id}/attachments/{aid}`) — currently only upload + get are wrapped. |
-| New routes | `server/api/items.py` | `DELETE /api/items/{id}/attachments/{aid}`; a "set primary" PUT for attachments. |
+| Change | File | Status |
+|--------|------|--------|
+| Live probe of every Homebox-side unknown before writing code | `tests/test_items_live.py` | ✅ Done — confirmed all 4 bugs above, plus the exact attachment PUT body Homebox requires and the shape of `GET /entities/{id}/path` |
+| Widen `PUT /api/items/{item_id}` | `server/api/items.py` | ✅ Done — typed `ItemUpdateRequest` (`server/schemas/items.py`) replaces the untyped `dict[str, Any]`; `extra="forbid"` rejects unknown keys instead of silently dropping them; `locationId`/`parentId` collapse to one field via `AliasChoices` so the bug class is structurally impossible, not just patched |
+| New `GET /api/items/{item_id}` | `server/api/items.py` | ✅ Done — new `ItemDetailResponse` (the old QR-lookup response of that name was renamed `ItemQrLookupResponse`); fetches the item and its breadcrumb path concurrently via `asyncio.gather`, degrading to an empty breadcrumb on path-fetch failure |
+| Fix asset-ID lookup's location (bug #3) | `server/api/items.py` | ✅ Done — shares the same `_resolve_parent_ref()` helper as every other read site now |
+| New client methods | `src/homebox_companion/homebox/client.py` | ✅ Done — `delete_attachment()`, `update_attachment()` (`DELETE`/`PUT /entities/{id}/attachments/{aid}`) |
+| New routes | `server/api/items.py` | ✅ Done — `DELETE /api/items/{id}/attachments/{aid}`; `PUT /api/items/{id}/attachments/{aid}` (set/unset primary) |
 
-Note: `server/api/items.py`'s existing `update_item()` reads `full_item.get("location", {}).get("id")` when
-rebuilding the update payload — but M1 confirmed (against a live Homebox 0.26.1) that the full-item fetch
-(`GET /entities/{id}`) returns the field as `parent`, not `location` (see `homebox/views.py`'s
-`ItemView.from_dict`, which already handles both). This looks like a latent bug that silently drops
-`locationId` on every PUT today. Worth checking and fixing as part of widening this same route.
+`_build_item_update_payload()` and `_merge_custom_fields()` are extracted as pure, HTTP-free functions for
+unit testing. Custom fields are echoed from Homebox's raw `fields` list **verbatim** (not rebuilt through
+`HomeboxItemField`, which would downgrade a number/boolean-typed field to `type="text"` and drop its id) —
+only the display names present in the request's `fields` dict are touched; every other field, including ones
+outside the app's known `CustomFieldDefinition` list, survives untouched.
 
-Reuse: `HomeboxItemField` (`src/homebox_companion/tools/vision/models.py`) for custom-field payloads;
-`get_valid_tag_ids()` (`server/dependencies.py`) to filter stale tag IDs, exactly as `POST /items` already
-does in the batch-create path.
+Reused as planned: `HomeboxItemField` for appending brand-new custom fields; `get_valid_tag_ids()` to filter
+stale tag IDs, exactly as `POST /items` already does.
 
 ### Frontend
 
 | File | Status | Notes |
 |------|--------|-------|
-| `frontend/src/routes/items/[id]/+page.svelte` | Not started | Detail view with inline edit. |
-| `frontend/src/lib/workflows/item-detail.svelte.ts` | Not started | New singleton/service for load/dirty/save state. |
+| `frontend/src/routes/items/[id]/+page.svelte` | ✅ Done | Read-only detail view with an explicit **Edit** toggle (not always-editable) — Save/Cancel exits edit mode. |
+| `frontend/src/lib/workflows/item-detail.svelte.ts` | ✅ Done | Singleton `itemDetailWorkflow`: owns the loaded item + custom field defs + view/edit mode; `save()` diffs against the loaded snapshot and PUTs only the changed keys. |
+| `frontend/src/lib/utils/itemDiff.ts` | ✅ Done | Pure `diffItem()`/`draftFromItem()`/`buildCustomFieldRecord()`, unit tested (`itemDiff.test.ts`, 14 cases) since vitest runs `environment: 'node'`. |
+| `frontend/src/lib/components/AttachmentGallery.svelte` | ✅ Done | New thin component — `ImagesPanel.svelte` binds local pre-upload `File[]` and doesn't fit server-side attachments with real IDs, so it was not reused. |
 
-**Reuse wholesale** — no new field components needed, all are `$bindable` with a `size: 'sm' | 'md'`
-variant (`frontend/src/lib/components/form/`):
-- `ItemCoreFields.svelte` (name, quantity, description)
-- `ItemExtendedFields.svelte` (manufacturer, model, serial, purchase price/from, notes)
-- `ItemCustomFields.svelte`
-- `TagSelector.svelte`
-- `LocationSelector.svelte`
-- `AssetIdInput.svelte`
+**Reused wholesale, as planned** (all `$bindable` with a `size` variant, except two corrections found in
+review — `AssetIdInput` has neither a `size` prop nor a bindable value (it's `onChange`-driven), and
+`TagSelector` is `onToggle`-driven, not bindable):
+- `ItemCoreFields.svelte`, `ItemExtendedFields.svelte`, `ItemCustomFields.svelte`, `TagSelector.svelte`,
+  `LocationSelector.svelte`, `AssetIdInput.svelte`.
 
-Attachment gallery: list, upload (existing `POST /items/{id}/attachments`), set primary, delete. Try reusing
-`ImagesPanel.svelte` / `ThumbnailEditor.svelte` first; fall back to a thin new gallery component if their
-props don't fit an "existing item" context (they were built for in-progress capture sessions).
+`insured`/`archived` render as a small standalone "Flags" row on the page rather than extending
+`ItemExtendedFields` — that component is shared with the review page and chat approval panel, and
+`archived` has no natural home in it.
 
-Actions row:
-- **Move** — existing `locationId` support in PUT, same call `relocateWorkflow` already makes.
-- **Print label** — existing `POST /items/{id}/print-label`, gated on `print_enabled` from `/api/config`.
-- **Delete** — existing `DELETE /items/{id}`, behind `ConfirmDialog.svelte`.
-- **Open in Homebox** — deep link using `homebox_url` from `/api/config`, same pattern as
-  `frontend/src/routes/relocate/+page.svelte:182`.
+Actions row: **Move** (a `LocationSelector` inside a `Modal`, calling the same single-field `{locationId}`
+PUT `relocateWorkflow` makes), **Print label** (gated on `print_enabled`), **Delete** (behind
+`ConfirmDialog.svelte`), **Open in Homebox** (`homebox_url` deep link). `frontend/src/routes/browse/+page.svelte`
+now links item names to `/items/[id]` instead of opening Homebox directly, resolving M1's deliberate
+"no dead links" placeholder; "Open in Homebox" moved onto the detail page as its own action.
+
+## Verification performed
+
+- `uv run ruff check` / `uv run ty check` / `uv run vulture --min-confidence 70` / `uv run pytest` — all
+  clean (one pre-existing unrelated failure in `test_prompts.py`, confirmed present on `main` before this
+  work, same as M1 found).
+- `uv run pytest -m live` — the new `tests/test_items_live.py` (6 probes) plus the full existing live suite
+  pass against a real `ghcr.io/sysadminsmedia/homebox:0.26.1` container (via the `homebox_container` session
+  fixture already in `tests/conftest.py` — no hand-rolled `docker run` needed this time).
+- New pytest coverage: `test_items_update.py` (16 cases — the locationId/parentId alias fix, absent-key
+  preservation, explicit-null clearing, unknown-key rejection, tag filtering, custom-field merge rules,
+  null-safety), `test_item_detail.py` (9 cases — parent-is-location vs. parent-is-item, path-fetch failure
+  degradation, route-ordering regression, the bug #3 fix), `test_item_attachments.py` (5 cases).
+- `npm run check` / `npm run format:check` / `npx vitest run` (33 tests, incl. 14 new `itemDiff.test.ts`) —
+  all clean (pre-existing unrelated errors only in `bleScanner.svelte.ts`/`SuggestedTagChips.svelte`,
+  confirmed present on `main`).
+- `npm run lint` could not run — pre-existing, unrelated environment issue (`eslint-plugin-tailwindcss`
+  fails to resolve `tailwindcss`), same as M1 found.
+- `npm run build` succeeds; `/items/[id]` is present in the compiled output.
+- **Full end-to-end against a real Homebox 0.26.1**, through the actual running FastAPI app (not just unit
+  stubs): created an item, set a custom field, moved it via `{locationId}` and confirmed it landed at the new
+  `parentId` with the custom field intact; fetched `GET /items/{id}` and confirmed breadcrumb/attachments/
+  parent projection; uploaded two attachments, set the second as primary, deleted the first, and confirmed
+  the thumbnail proxy serves the correct image; confirmed `GET /items/by-asset-id/{assetId}` now reports the
+  real location before and after a move (the bug #1/#3 interaction fix); deleted an item. Also confirmed the
+  three "bug" scenarios reproduce on a stub of the *old* code and are fixed by the new code.
 
 ## Open Items / Known Limitations
 
-- ⚠️ Check `frontend/src/lib/utils/routeGuard.ts` — `/items/*` and `/browse` must be excluded from the scan
-  workflow's `STATUS_TO_ROUTE` guards, the way `/relocate` already is, or the guard will redirect away from
-  the detail page mid-session.
-- Concurrent edit conflicts aren't handled: the fetch-then-merge PUT pattern means two open edit sessions on
-  the same item can clobber each other. Not fixing this now (no versioning/ETag support in Homebox's API),
-  but the delete/save flow should at least surface a stale-data error clearly if Homebox itself rejects it.
-- Attachment set-primary/delete depends on unwrapped Homebox endpoints (`update_attachment`,
-  `delete_attachment`) that haven't been verified against a live Homebox instance yet — confirm the exact
-  request/response shape before implementing.
-- Decide demo-mode behavior for Delete (chat already disables destructive actions in demo mode).
+- **Concurrent edit conflicts remain unhandled.** Homebox has no ETag/versioning, so two open edit sessions
+  on the same item can still clobber each other. Mitigated, not solved: `itemDetailWorkflow.save()` sends
+  only the fields that actually changed (`diffItem`), which shrinks the clobber window to genuinely
+  conflicting fields rather than the whole record. A Homebox-side rejection surfaces as a toast + inline
+  error, not a silent failure.
+- **`extra="forbid"` on `ItemUpdateRequest` is technically a breaking change** for any client sending unknown
+  keys. Only two callers exist (`submission.svelte.ts`, `relocate.svelte.ts`) and both were updated/verified
+  compatible — but a stale cached PWA bundle sending a since-removed field will get a 422 instead of a
+  silent drop. Considered the correct trade.
+- **MCP's `UpdateItemTool` (`src/homebox_companion/mcp/tools.py`) has the same custom-fields-wiping bug as #2
+  above** — it never sends `fields` either. Out of scope for this milestone; `_build_item_update_payload` is
+  the natural fix for a follow-up.
+- `upload_attachment_typed()`'s assumption of a nested `document` key on the upload response doesn't match
+  Homebox 0.26.1's actual shape (the whole updated item, attachment nested under `attachments`) — found
+  during Step 0 verification, looks pre-existing and unused by any current caller. Not fixed here.
+- No demo-mode gating on the detail page's destructive actions (per product decision for this milestone) —
+  unlike chat, which disables destructive actions in demo mode.
 
 ## Superseded: Move Items feature (formerly RELOCATE.md)
 
-The standalone `/relocate` page predates this milestone and stays as-is; M2 doesn't replace it, but the
-**Move** action added here should call the same underlying update as `relocateWorkflow` for consistency.
+The standalone `/relocate` page predates this milestone and stays as-is; M2 didn't replace it, but the
+**Move** action added here calls the same underlying update as `relocateWorkflow` for consistency.
 Original tracker content, preserved for reference:
 
 ### BLE Integration
@@ -111,4 +167,5 @@ M3 (Scan-to-open) extracts and reuses this same resolution chain.
 ## Done When
 
 Every field visible in Homebox is editable here and round-trips correctly, including custom fields and
-tags; attachments can be added/removed/re-primaried.
+tags; attachments can be added/removed/re-primaried. **All satisfied**, verified against a real Homebox
+instance end-to-end.

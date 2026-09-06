@@ -272,4 +272,20 @@ export const routeGuards = {
 
 		return true;
 	},
+
+	/**
+	 * Guard for the item detail/edit page
+	 * - Requires authentication only - it's independent of the scan workflow status,
+	 *   same as Browse and Move Items (opened from a search result or a scanned QR code).
+	 */
+	itemDetail: (): boolean => {
+		const result = checkRouteAccess({ auth: true });
+
+		if (!result.allowed && result.redirectTo) {
+			goto(resolveNavHref(result.redirectTo));
+			return false;
+		}
+
+		return true;
+	},
 } as const;

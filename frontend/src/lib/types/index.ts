@@ -344,6 +344,61 @@ export interface ItemListResponse {
 	total: number;
 }
 
+/** The item's parent (a location, or another item), with a flag for which */
+export interface ItemParentRef {
+	id: string;
+	name: string;
+	isLocation: boolean;
+}
+
+/** A custom field value on an item, as returned by GET /items/{id} */
+export interface ItemFieldValue {
+	name: string;
+	type: string;
+	textValue: string | null;
+}
+
+/** An attachment (image/document) on an item, for the detail-page gallery */
+export interface ItemAttachmentRef {
+	id: string;
+	title: string;
+	type: string;
+	primary: boolean;
+	mimeType: string | null;
+	createdAt: string | null;
+}
+
+/** One ancestor location in the item's breadcrumb path */
+export interface ItemPathSegment {
+	id: string;
+	name: string;
+}
+
+/** Full item projection returned by GET /items/{id} (the detail/edit page) */
+export interface ItemDetail {
+	id: string;
+	name: string;
+	description: string | null;
+	quantity: number;
+	assetId: string | null;
+	insured: boolean;
+	archived: boolean;
+	manufacturer: string | null;
+	modelNumber: string | null;
+	serialNumber: string | null;
+	purchasePrice: number | null;
+	purchaseFrom: string | null;
+	notes: string | null;
+	parent: ItemParentRef | null;
+	tags: ItemTagRef[];
+	fields: ItemFieldValue[];
+	attachments: ItemAttachmentRef[];
+	thumbnailId: string | null;
+	path: ItemPathSegment[];
+	createdAt: string | null;
+	updatedAt: string | null;
+}
+
 /** Response from merge operation */
 export interface MergedItemResponse {
 	name: string;

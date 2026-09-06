@@ -67,7 +67,9 @@ export function getNavItems(scanHref: string, isDemoModeExplicit: boolean): NavI
 			label: 'Browse',
 			href: '/browse',
 			icon: 'browse',
-			activeRoutes: ['/browse'],
+			// '/items' (the detail/edit page reached from a browse result) stays under the
+			// Browse tab too, so it doesn't highlight none of the bottom-nav icons.
+			activeRoutes: ['/browse', '/items'],
 		},
 		{
 			id: 'settings',

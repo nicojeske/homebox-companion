@@ -1,21 +1,18 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { Search, X, MapPin, Tag as TagIcon, Package, ExternalLink } from 'lucide-svelte';
+	import { resolve } from '$app/paths';
+	import { Search, X, MapPin, Tag as TagIcon, Package, ChevronRight } from 'lucide-svelte';
 	import AppContainer from '$lib/components/AppContainer.svelte';
 	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
 	import Loader from '$lib/components/Loader.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import { browseWorkflow } from '$lib/workflows/browse.svelte';
 	import { items as itemsApi, type BlobUrlResult } from '$lib/api';
-	import { getConfig } from '$lib/api/settings';
 	import { routeGuards } from '$lib/utils/routeGuard';
 	import { getInitPromise } from '$lib/services/tokenRefresh';
 	import { createLogger } from '$lib/utils/logger';
-	import type { ItemSearchResult } from '$lib/types';
 
 	const log = createLogger({ prefix: 'BrowsePage' });
-
-	let homeboxUrl = $state('');
 
 	// Thumbnail blob URLs, keyed by item ID (revoked on destroy / when superseded)
 	let thumbnailUrls = $state<Record<string, string>>({});
@@ -29,13 +26,6 @@
 		if (!routeGuards.browse()) return;
 
 		await browseWorkflow.ensureAuxData();
-
-		try {
-			const config = await getConfig();
-			homeboxUrl = config.homebox_url;
-		} catch (err) {
-			log.debug('Failed to load config (Homebox deep links disabled):', err);
-		}
 	});
 
 	onDestroy(() => {
@@ -81,11 +71,6 @@
 
 	async function handleRefresh(): Promise<void> {
 		await browseWorkflow.search();
-	}
-
-	function openInHomebox(item: ItemSearchResult): void {
-		if (!homeboxUrl) return;
-		window.open(`${homeboxUrl}/item/${encodeURIComponent(item.id)}`, '_blank');
 	}
 
 	// Load thumbnails for any newly-seen items that have one
@@ -278,24 +263,17 @@
 								</div>
 
 								<div class="min-w-0 flex-1">
-									<button
-										type="button"
-										onclick={() => openInHomebox(item)}
-										disabled={!homeboxUrl}
-										class="flex min-w-0 items-center gap-1.5 text-left disabled:cursor-default"
-										title={homeboxUrl ? 'Open in Homebox' : undefined}
+									<a
+										href={resolve('/items/[id]', { id: item.id })}
+										class="flex min-w-0 items-center gap-1.5 text-left"
 									>
 										<p
-											class="truncate font-medium text-neutral-100 {homeboxUrl
-												? 'hover:text-primary-300'
-												: ''} transition-colors"
+											class="truncate font-medium text-neutral-100 transition-colors hover:text-primary-300"
 										>
 											{item.name}
 										</p>
-										{#if homeboxUrl}
-											<ExternalLink size={12} class="shrink-0 text-neutral-600" />
-										{/if}
-									</button>
+										<ChevronRight size={14} class="shrink-0 text-neutral-600" />
+									</a>
 									<p class="truncate text-body-sm text-neutral-500">
 										Qty: {item.quantity}
 										{#if item.location}

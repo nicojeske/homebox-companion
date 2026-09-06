@@ -54,7 +54,10 @@ RAW_ITEM = {
     "description": "18V drill",
     "quantity": 2,
     "assetId": "000-001",
-    "thumbnailId": "thumb-1",
+    # Homebox 0.26.1 returns the primary attachment's id as 'imageId' (confirmed live),
+    # not 'thumbnailId' — the M1 fixture used the wrong key, so browse thumbnails never
+    # actually loaded against a real Homebox instance until this was caught in M2.
+    "imageId": "thumb-1",
     "updatedAt": "2026-01-01T00:00:00Z",
     "parent": {"id": "loc-1", "name": "Garage"},
     "tags": [{"id": "tag-1", "name": "Power Tools"}],
@@ -86,6 +89,7 @@ def test_list_items_projects_location_and_tags() -> None:
     assert item["location"] == {"id": "loc-1", "name": "Garage"}
     assert item["tags"] == [{"id": "tag-1", "name": "Power Tools"}]
     assert item["updatedAt"] == "2026-01-01T00:00:00Z"
+    assert item["thumbnailId"] == "thumb-1"
 
 
 def test_list_items_falls_back_to_legacy_location_field() -> None:

@@ -1221,6 +1221,65 @@ class HomeboxClient:
         )
 
     @_rate_limited
+    async def update_attachment(
+        self,
+        token: str,
+        item_id: str,
+        attachment_id: str,
+        *,
+        title: str,
+        primary: bool,
+        attachment_type: str = "photo",
+    ) -> dict[str, Any]:
+        """Update an attachment's metadata (used to set/unset it as the primary photo).
+
+        Confirmed live against Homebox 0.26.1: the PUT body must include all three
+        of ``title``/``type``/``primary`` — a partial body (e.g. ``{"primary": true}``
+        alone) 500s with an enum-validation error on the empty ``type``.
+
+        Args:
+            token: The bearer token from login.
+            item_id: The ID of the item the attachment belongs to.
+            attachment_id: The ID of the attachment to update.
+            title: The attachment's title (Homebox requires it on every update).
+            primary: Whether this attachment should become the item's primary photo.
+            attachment_type: Attachment type (default: "photo").
+
+        Returns:
+            The updated item dictionary (Homebox returns the whole item, not a bare
+            attachment object).
+        """
+        response = await self.client.put(
+            f"{self.base_url}/entities/{item_id}/attachments/{attachment_id}",
+            headers=self._auth_headers(token, content_type="application/json"),
+            json={"title": title, "type": attachment_type, "primary": primary},
+        )
+        self._ensure_success(response, "Update attachment")
+        return response.json()
+
+    @_rate_limited
+    async def delete_attachment(self, token: str, item_id: str, attachment_id: str) -> None:
+        """Delete an attachment from an item.
+
+        Args:
+            token: The bearer token from login.
+            item_id: The ID of the item the attachment belongs to.
+            attachment_id: The ID of the attachment to delete.
+
+        Raises:
+            HomeboxAuthError: If authentication fails.
+            FileNotFoundError: If the attachment is not found (404).
+            HomeboxAPIError: If other API errors occur.
+        """
+        response = await self.client.delete(
+            f"{self.base_url}/entities/{item_id}/attachments/{attachment_id}",
+            headers=self._auth_headers(token),
+        )
+        if response.status_code == 404:
+            raise FileNotFoundError(f"Attachment {attachment_id} not found for item {item_id}")
+        self._ensure_success(response, "Delete attachment")
+
+    @_rate_limited
     async def print_label(self, token: str, item_id: str) -> str:
         """Trigger server-side label printing for an item.
 

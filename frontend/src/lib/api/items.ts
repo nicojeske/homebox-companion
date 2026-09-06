@@ -7,6 +7,7 @@ import { apiLogger as log } from '../utils/logger';
 import type {
 	BatchCreateRequest,
 	BatchCreateResponse,
+	ItemDetail,
 	ItemListResponse,
 	ItemSummary,
 } from '../types';
@@ -50,9 +51,28 @@ export interface ItemUpdateData {
 	name?: string;
 	description?: string;
 	locationId?: string | null;
+	parentId?: string | null;
+	quantity?: number;
+	insured?: boolean;
+	archived?: boolean;
+	tagIds?: string[] | null;
+	manufacturer?: string | null;
+	modelNumber?: string | null;
+	serialNumber?: string | null;
+	purchasePrice?: number | null;
+	purchaseFrom?: string | null;
+	notes?: string | null;
+	/** Custom fields keyed by display name; null (or '') removes that field. */
+	fields?: Record<string, string | null>;
 }
 
-export interface ItemDetail {
+/**
+ * Simple item details for QR code lookups (Move Items feature).
+ *
+ * Renamed from `ItemDetail` (M2) to free that name for the richer `ItemDetail`
+ * type in `$lib/types` returned by `GET /items/{id}` (the detail/edit page).
+ */
+export interface ItemQrLookupResult {
 	id: string;
 	name: string;
 	assetId: string | null;
@@ -145,7 +165,13 @@ export const items = {
 	 * Used by the Move Items feature to resolve scanned QR codes to item details.
 	 */
 	getByAssetId: (assetId: string, signal?: AbortSignal) =>
-		request<ItemDetail>(`/items/by-asset-id/${encodeURIComponent(assetId)}`, { signal }),
+		request<ItemQrLookupResult>(`/items/by-asset-id/${encodeURIComponent(assetId)}`, { signal }),
+
+	/**
+	 * Fetch full item details for the item detail/edit page.
+	 */
+	get: (itemId: string, signal?: AbortSignal) =>
+		request<ItemDetail>(`/items/${itemId}`, { signal }),
 
 	/**
 	 * Delete an item from Homebox.
@@ -154,6 +180,33 @@ export const items = {
 	delete: (itemId: string, signal?: AbortSignal) => {
 		log.debug(`Deleting item: ${itemId}`);
 		return request<{ message: string }>(`/items/${itemId}`, {
+			method: 'DELETE',
+			signal,
+		});
+	},
+
+	/**
+	 * Set (or unset) an attachment as the item's primary photo, optionally renaming it.
+	 */
+	setPrimaryAttachment: (
+		itemId: string,
+		attachmentId: string,
+		primary: boolean,
+		title?: string,
+		signal?: AbortSignal
+	) =>
+		request<unknown>(`/items/${itemId}/attachments/${attachmentId}`, {
+			method: 'PUT',
+			body: JSON.stringify({ primary, title }),
+			signal,
+		}),
+
+	/**
+	 * Delete an attachment from an item.
+	 */
+	deleteAttachment: (itemId: string, attachmentId: string, signal?: AbortSignal) => {
+		log.debug(`Deleting attachment ${attachmentId} from item ${itemId}`);
+		return request<{ message: string }>(`/items/${itemId}/attachments/${attachmentId}`, {
 			method: 'DELETE',
 			signal,
 		});

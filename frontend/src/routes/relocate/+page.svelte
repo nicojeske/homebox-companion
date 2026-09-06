@@ -10,6 +10,7 @@
 	import { items } from '$lib/api/items';
 	import { showToast } from '$lib/stores/ui.svelte';
 	import { resolveQrUrl } from '$lib/utils/qrUrl';
+	import { parseScannedCode } from '$lib/utils/scanCode';
 	import { getConfig } from '$lib/api/settings';
 	import { createLogger } from '$lib/utils/logger';
 
@@ -57,9 +58,6 @@
 	// Scan handler (shared between BLE and camera)
 	// ---------------------------------------------------------------------------
 
-	const LOCATION_RE = /\/location\/([a-f0-9-]+)/i;
-	const ASSET_RE = /\/a\/([^\s/]+)/;
-
 	function findAncestors(
 		nodes: LocationTreeNode[],
 		targetId: string,
@@ -86,9 +84,10 @@
 			const resolved = await resolveQrUrl(rawText);
 			log.debug(`Resolved scan: ${resolved}`);
 
-			const locationMatch = LOCATION_RE.exec(resolved);
-			if (locationMatch) {
-				const uuid = locationMatch[1];
+			const parsed = parseScannedCode(resolved);
+
+			if (parsed.kind === 'location') {
+				const uuid = parsed.locationId;
 				const [loc, tree] = await Promise.all([locations.get(uuid), locations.tree()]);
 				const ancestors = findAncestors(tree as LocationTreeNode[], uuid) ?? [];
 				relocateWorkflow.setTargetLocation(loc.id, loc.name, ancestors);
@@ -96,10 +95,8 @@
 				return;
 			}
 
-			const assetMatch = ASSET_RE.exec(resolved);
-			if (assetMatch) {
-				const assetId = assetMatch[1];
-				await relocateWorkflow.processItemScan(assetId);
+			if (parsed.kind === 'asset') {
+				await relocateWorkflow.processItemScan(parsed.assetId);
 				// Load thumbnail for new log entry if available
 				const entry = relocateWorkflow.moveLog[0];
 				if (entry?.thumbnailId && !(entry.itemId in thumbnailUrls)) {

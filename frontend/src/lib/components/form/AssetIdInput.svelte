@@ -5,12 +5,16 @@
 	 * Features:
 	 * - Text input for manual entry
 	 * - QR scan button to scan pre-printed QR codes
-	 * - Parses QR URL format: https://homebox.duelion.com/a/{asset_id}
+	 * - Parses the legacy QR URL format (https://homebox.duelion.com/a/{asset_id})
+	 *   and the compact tag format (a{digits}, e.g. a123123)
+	 * - Falls back to treating the scanned text as the raw asset ID (manual
+	 *   entry, bare 1D barcodes, etc.)
 	 */
 	import { onMount, onDestroy } from 'svelte';
 	import { QrCode } from 'lucide-svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import { resolveQrUrl } from '$lib/utils/qrUrl';
+	import { parseScannedCode } from '$lib/utils/scanCode';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
 
 	interface Props {
@@ -42,25 +46,13 @@
 		unsubscribeBle?.();
 	});
 
-	// Extract asset ID from QR code URL or raw ID
-	function parseAssetIdFromUrl(scannedText: string): string {
-		// Try to parse Homebox asset URL format: https://homebox.duelion.com/a/{asset_id}
-		// Also supports variations like /a/000-001 or just the raw ID
-		const urlPattern = /\/a\/([^/\s]+)/;
-		const match = scannedText.match(urlPattern);
-
-		if (match && match[1]) {
-			return match[1];
-		}
-
-		// If no URL pattern found, treat the entire text as the asset ID
-		// (after trimming whitespace)
-		return scannedText.trim();
-	}
-
 	async function handleScan(scannedText: string) {
 		const resolvedUrl = await resolveQrUrl(scannedText);
-		const assetId = parseAssetIdFromUrl(resolvedUrl);
+		const parsed = parseScannedCode(resolvedUrl);
+		// If the scanned text isn't a recognised asset tag (e.g. a location
+		// tag, a raw 1D barcode, or manually-entered text), fall back to
+		// treating the resolved text as the raw asset ID.
+		const assetId = parsed.kind === 'asset' ? parsed.assetId : resolvedUrl.trim();
 		onChange(assetId || null);
 		showScanner = false;
 	}

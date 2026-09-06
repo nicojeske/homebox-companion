@@ -14,6 +14,7 @@
 	import { getInitPromise } from '$lib/services/tokenRefresh';
 	import { createLogger } from '$lib/utils/logger';
 	import { resolveQrUrl } from '$lib/utils/qrUrl';
+	import { parseScannedCode } from '$lib/utils/scanCode';
 	import type { Location } from '$lib/types';
 	import Button from '$lib/components/Button.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
@@ -268,17 +269,18 @@
 			// Resolve shortened URLs (bit.ly, etc.) to their final destination
 			const resolvedUrl = await resolveQrUrl(decodedText);
 
-			// Parse the QR code URL to extract location ID
-			// Expected format: https://homebox.example.com/location/{uuid}
-			const locationIdMatch = resolvedUrl.match(/\/location\/([a-f0-9-]+)(?:\/|$)/i);
+			// Parse the QR code to extract a location ID. Supports both the legacy
+			// URL tag (https://homebox.example.com/location/{uuid}) and the compact
+			// tag format (l{uuid}).
+			const parsed = parseScannedCode(resolvedUrl);
 
-			if (!locationIdMatch) {
+			if (parsed.kind !== 'location') {
 				showToast('Invalid QR code. Not a Homebox location.', 'error');
 				isProcessingQr = false;
 				return;
 			}
 
-			const locationId = locationIdMatch[1];
+			const locationId = parsed.locationId;
 
 			// Fetch location details from API
 			const location = await locationsApi.get(locationId);

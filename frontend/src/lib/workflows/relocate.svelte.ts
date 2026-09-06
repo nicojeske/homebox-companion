@@ -6,11 +6,16 @@
  *   2. User scans an item QR   → processItemScan() fetches item, updates locationId,
  *                                 prepends a MoveLogEntry with previous location
  *   3. User taps Undo          → undoMove() reverts item to its previous location
+ *
+ * The move log and destination are persisted to IndexedDB after every mutation
+ * (see `relocatePersistence.ts`) so a reload doesn't lose the session - call
+ * `restoreSession()` once on page mount to load it back in.
  */
 
 import { items } from '$lib/api/items';
 import { showToast } from '$lib/stores/ui.svelte';
 import { createLogger } from '$lib/utils/logger';
+import * as relocatePersistence from '$lib/services/relocatePersistence';
 
 const log = createLogger({ prefix: 'RelocateWorkflow' });
 
@@ -55,6 +60,48 @@ class RelocateWorkflow {
 	/** Last error message, cleared on the next successful operation. */
 	error = $state<string | null>(null);
 
+	/** When `targetLocation` was last set - drives the 1-hour restore window (not reactive UI state). */
+	private targetLocationSetAt: number | null = null;
+
+	// ---------------------------------------------------------------------------
+	// PERSISTENCE
+	// ---------------------------------------------------------------------------
+
+	/** Persist the current state. Never throws - failures are logged and ignored. */
+	private async persist(): Promise<void> {
+		await relocatePersistence.save({
+			// Deep-unwrap $state proxies (not structured-cloneable by IndexedDB directly)
+			moveLog: JSON.parse(
+				JSON.stringify(this.moveLog.map((e) => ({ ...e, movedAt: e.movedAt.getTime() })))
+			),
+			targetLocation: this.targetLocation ? { ...this.targetLocation } : null,
+			targetLocationPath: [...this.targetLocationPath],
+			targetLocationSetAt: this.targetLocationSetAt,
+		});
+	}
+
+	/**
+	 * Load a previously-persisted session (move log + possibly the destination).
+	 * Call once, on page mount - calling it after scans have already happened
+	 * this page-lifetime would overwrite them, since it replaces rather than merges.
+	 */
+	async restoreSession(): Promise<void> {
+		const restored = await relocatePersistence.restore();
+		if (!restored) return;
+
+		this.moveLog = restored.moveLog.map((e) => ({ ...e, movedAt: new Date(e.movedAt) }));
+
+		if (restored.targetLocation) {
+			this.targetLocation = restored.targetLocation;
+			this.targetLocationPath = restored.targetLocationPath;
+			// Preserve the original set time - substituting Date.now() here would
+			// silently re-arm the destination for another hour on every reload.
+			this.targetLocationSetAt = restored.targetLocationSetAt;
+		}
+
+		log.info(`Restored relocate session: ${this.moveLog.length} log entries`);
+	}
+
 	// ---------------------------------------------------------------------------
 	// LOCATION
 	// ---------------------------------------------------------------------------
@@ -62,13 +109,17 @@ class RelocateWorkflow {
 	setTargetLocation(id: string, name: string, path: string[] = []): void {
 		this.targetLocation = { id, name };
 		this.targetLocationPath = path;
+		this.targetLocationSetAt = Date.now();
 		this.error = null;
 		log.info(`Target location set: ${name} (${id})`);
+		void this.persist();
 	}
 
 	clearTargetLocation(): void {
 		this.targetLocation = null;
 		this.targetLocationPath = [];
+		this.targetLocationSetAt = null;
+		void this.persist();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -119,6 +170,7 @@ class RelocateWorkflow {
 				undone: false,
 			};
 			this.moveLog = [entry, ...this.moveLog];
+			void this.persist();
 
 			showToast(`Moved "${item.name}" to ${this.targetLocation.name}.`, 'success');
 			log.info(`Moved ${item.name} (${item.id}) → ${this.targetLocation.name}`);
@@ -153,6 +205,7 @@ class RelocateWorkflow {
 
 			// Mark as undone (immutable update)
 			this.moveLog = this.moveLog.map((e, i) => (i === index ? { ...e, undone: true } : e));
+			void this.persist();
 
 			const dest = entry.previousLocationName ?? 'original location';
 			showToast(`Moved "${entry.itemName}" back to ${dest}.`, 'success');
@@ -172,13 +225,17 @@ class RelocateWorkflow {
 
 	clearLog(): void {
 		this.moveLog = [];
+		void this.persist();
 	}
 
 	/** Reset everything (location + log). */
 	clearAll(): void {
 		this.targetLocation = null;
+		this.targetLocationPath = [];
+		this.targetLocationSetAt = null;
 		this.moveLog = [];
 		this.error = null;
+		void relocatePersistence.clear();
 	}
 }
 

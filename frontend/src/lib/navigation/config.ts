@@ -1,5 +1,7 @@
 import { resolve } from '$app/paths';
 import { showToast } from '$lib/stores/ui.svelte';
+import { STATUS_TO_ROUTE } from '$lib/utils/routeGuard';
+import type { ScanStatus } from '$lib/types';
 
 /**
  * Navigation item configuration.
@@ -27,19 +29,12 @@ type AppRoute = Parameters<typeof resolve>[0];
 /**
  * Get the current scan workflow href based on workflow status.
  * This must be called reactively from a component that has access to the workflow state.
+ *
+ * Delegates to `STATUS_TO_ROUTE` (`lib/utils/routeGuard.ts`) - the same map the route
+ * guards use - so the nav tab's target and what the guards actually allow can't drift apart.
  */
-export function getScanHref(workflowStatus: string): string {
-	switch (workflowStatus) {
-		case 'reviewing':
-			return '/review';
-		case 'confirming':
-			return '/summary';
-		case 'capturing':
-		case 'analyzing':
-			return '/capture';
-		default:
-			return '/location';
-	}
+export function getScanHref(workflowStatus: ScanStatus): string {
+	return STATUS_TO_ROUTE[workflowStatus];
 }
 
 /**

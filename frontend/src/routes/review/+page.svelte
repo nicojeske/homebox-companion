@@ -32,7 +32,14 @@
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
 	import { workflowLogger as log } from '$lib/utils/logger';
 	import { longpress } from '$lib/actions/longpress';
-	import { SquarePen, ImageIcon, ChevronsRight, Check } from 'lucide-svelte';
+	import {
+		SquarePen,
+		ImageIcon,
+		ChevronsRight,
+		ChevronLeft,
+		Check,
+		ExternalLink,
+	} from 'lucide-svelte';
 
 	// Capture limits (loaded from config, with safe defaults)
 	let maxImages = $state(30);
@@ -49,6 +56,13 @@
 	const currentIndex = $derived(workflow.state.currentReviewIndex);
 	const currentItem = $derived(workflow.currentItem);
 	const images = $derived(workflow.state.images);
+	const hasPrevious = $derived(workflow.state.hasPrevious);
+	const confirmedItems = $derived(workflow.state.confirmedItems);
+	// True when the item currently shown has already been confirmed (the user
+	// navigated Back to it) - re-confirming it is then an edit, not a duplicate.
+	const isCurrentItemConfirmed = $derived(
+		!!currentItem?.reviewKey && confirmedItems.some((c) => c.reviewKey === currentItem.reviewKey)
+	);
 
 	// Local UI state
 	let editedItem = $state<ReviewItem | null>(null);
@@ -60,6 +74,10 @@
 	let isProcessing = $state(false);
 	let allImages = $state<File[]>([]);
 	let showConfirmAllDialog = $state(false);
+	// Whether AssetIdInput's built-in QR scanner overlay is open (see onScannerToggle below)
+	let assetIdScannerOpen = $state(false);
+	// Homebox instance URL, for the duplicate-match "View in Homebox" deep link
+	let homeboxUrl = $state('');
 
 	// Track original images to detect modifications (for invalidating compressed URLs)
 	let originalImageSet = $state<Set<File>>(new Set());
@@ -150,10 +168,18 @@
 			const config = await getConfig();
 			maxImages = config.capture_max_images;
 			maxFileSizeMb = config.capture_max_file_size_mb;
+			homeboxUrl = config.homebox_url;
 		} catch (error) {
 			log.warn('Failed to load capture config, using defaults', error);
 		}
 	});
+
+	/** Build a link to an item's Homebox detail page by UUID (not asset ID). */
+	function getItemUrl(itemId: string): string | null {
+		if (!homeboxUrl) return null;
+		const base = homeboxUrl.replace(/\/$/, '');
+		return `${base}/item/${itemId}`;
+	}
 
 	// Cleanup on component unmount
 	onDestroy(() => {
@@ -177,6 +203,88 @@
 
 		// Scroll to top for next item
 		window.scrollTo({ top: 0, behavior: 'smooth' });
+	}
+
+	/**
+	 * Navigate to the previous item. Like Skip, this discards any unsaved
+	 * edits to the item being left - only Confirm persists edits, matching
+	 * the existing Skip behavior.
+	 */
+	function previousItem() {
+		if (!hasPrevious || isProcessing) return;
+		workflow.previousItem();
+
+		// Scroll to top for the previous item
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+	}
+
+	/** Pure forward navigation (peek at the next item without confirming/skipping the current one). */
+	function nextItemPeek() {
+		if (isProcessing) return;
+		workflow.nextItem();
+		window.scrollTo({ top: 0, behavior: 'smooth' });
+	}
+
+	/**
+	 * Review-screen keyboard shortcuts: ← / → to navigate, Enter or 'c' to
+	 * confirm, 's' to skip, Shift+Enter to open the Confirm All dialog.
+	 *
+	 * Deliberately no-ops while typing in a form field, while any overlay on
+	 * this page is open (thumbnail editor, images panel, AI correction panel,
+	 * confirm-all dialog, or the Asset ID field's QR scanner), while a
+	 * request is in flight, or when an unhandled modifier key is held.
+	 */
+	function handleKeydown(event: KeyboardEvent) {
+		const target = event.target as HTMLElement | null;
+		if (target) {
+			const tag = target.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) {
+				return;
+			}
+		}
+
+		if (
+			isProcessing ||
+			showThumbnailEditor ||
+			showImagesPanel ||
+			showAiCorrection ||
+			showConfirmAllDialog ||
+			assetIdScannerOpen
+		) {
+			return;
+		}
+
+		if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+		if (event.shiftKey) {
+			if (event.key === 'Enter' && remainingCount > 0) {
+				event.preventDefault();
+				handleLongPressConfirm();
+			}
+			return;
+		}
+
+		switch (event.key) {
+			case 'ArrowLeft':
+				event.preventDefault();
+				previousItem();
+				break;
+			case 'ArrowRight':
+				event.preventDefault();
+				nextItemPeek();
+				break;
+			case 'Enter':
+			case 'c':
+			case 'C':
+				event.preventDefault();
+				confirmItem();
+				break;
+			case 's':
+			case 'S':
+				event.preventDefault();
+				skipItem();
+				break;
+		}
 	}
 
 	/**
@@ -395,6 +503,8 @@
 	<title>Review Items - Homebox Companion</title>
 </svelte:head>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <div class="animate-in pb-32">
 	<StepIndicator currentStep={3} />
 
@@ -444,17 +554,42 @@
 
 			<!-- Duplicate warning banner -->
 			{#if editedItem.duplicate_match}
+				{@const duplicateUrl = getItemUrl(editedItem.duplicate_match.item_id)}
 				<div
-					class="mx-4 mt-4 flex items-center gap-3 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3"
+					class="mx-4 mt-4 flex flex-col gap-3 rounded-lg border border-warning-500/30 bg-warning-500/10 p-3"
 				>
-					<DuplicateWarningIcon match={editedItem.duplicate_match} />
-					<div class="text-body-sm">
-						<p class="font-medium text-warning-300">Possible Duplicate</p>
-						<p class="text-warning-200/80">This item may already exist in your inventory</p>
-						<p class="mt-0.5 text-xs text-warning-200/60">
-							Serial number "{editedItem.duplicate_match.serial_number}" found in "{editedItem
-								.duplicate_match.item_name}"
-						</p>
+					<div class="flex items-center gap-3">
+						<DuplicateWarningIcon match={editedItem.duplicate_match} />
+						<div class="text-body-sm">
+							<p class="font-medium text-warning-300">Possible Duplicate</p>
+							<p class="text-warning-200/80">This item may already exist in your inventory</p>
+							<p class="mt-0.5 text-xs text-warning-200/60">
+								Serial number "{editedItem.duplicate_match.serial_number}" found in "{editedItem
+									.duplicate_match.item_name}"
+							</p>
+						</div>
+					</div>
+					<div class="flex gap-2">
+						{#if duplicateUrl}
+							<a
+								href={duplicateUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-warning-500/40 bg-warning-500/10 px-3 py-1.5 text-xs font-medium text-warning-200 transition-colors hover:bg-warning-500/20"
+							>
+								<ExternalLink size={14} strokeWidth={1.5} />
+								View in Homebox
+							</a>
+						{/if}
+						<button
+							type="button"
+							onclick={skipItem}
+							disabled={isProcessing}
+							class="inline-flex items-center gap-1.5 rounded-lg border border-warning-500/40 bg-warning-500/10 px-3 py-1.5 text-xs font-medium text-warning-200 transition-colors hover:bg-warning-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+						>
+							<ChevronsRight size={14} strokeWidth={1.5} />
+							Skip — already have this
+						</button>
 					</div>
 				</div>
 			{/if}
@@ -469,7 +604,11 @@
 				/>
 
 				<!-- Asset ID field -->
-				<AssetIdInput value={editedItem.asset_id ?? null} onChange={handleAssetIdChange} />
+				<AssetIdInput
+					value={editedItem.asset_id ?? null}
+					onChange={handleAssetIdChange}
+					onScannerToggle={(open) => (assetIdScannerOpen = open)}
+				/>
 
 				<!-- Tags with chip selection -->
 				<TagSelector selectedIds={editedItem.tag_ids ?? []} onToggle={toggleTag} />
@@ -551,13 +690,30 @@
 	>
 		<AppContainer>
 			<!-- Item counter in footer for mobile - positioned above bottom nav -->
-			<div class="flex items-center justify-center py-3 md:hidden">
+			<div class="flex items-center justify-center gap-2 py-3 md:hidden">
 				<span class="text-body-sm font-medium text-neutral-300">
 					Item {currentIndex + 1} of {detectedItems.length}
 				</span>
+				{#if isCurrentItemConfirmed}
+					<span
+						class="text-success-300 rounded-full bg-success-500/20 px-2 py-0.5 text-xs font-medium"
+					>
+						Confirmed
+					</span>
+				{/if}
 			</div>
 			<!-- Action buttons -->
 			<div class="flex gap-3 px-4 pb-4">
+				<button
+					type="button"
+					onclick={previousItem}
+					disabled={isProcessing || !hasPrevious}
+					aria-label="Back to previous item"
+					title="Back to previous item"
+					class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-neutral-600 bg-neutral-800 text-neutral-300 transition-colors hover:border-neutral-500 hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-40"
+				>
+					<ChevronLeft size={20} strokeWidth={1.5} />
+				</button>
 				<div class="flex-1">
 					<Button variant="secondary" full onclick={skipItem} disabled={isProcessing}>
 						<ChevronsRight size={20} strokeWidth={1.5} />
@@ -574,6 +730,13 @@
 					</Button>
 					<InfoTooltip text="Long-press to confirm all remaining items at once." />
 				</div>
+			</div>
+			<!-- Keyboard shortcut hint - desktop only -->
+			<div class="hidden justify-center gap-4 pb-3 text-caption text-neutral-500 md:flex">
+				<span><kbd class="kbd">←</kbd> <kbd class="kbd">→</kbd> navigate</span>
+				<span><kbd class="kbd">Enter</kbd>/<kbd class="kbd">c</kbd> confirm</span>
+				<span><kbd class="kbd">s</kbd> skip</span>
+				<span><kbd class="kbd">Shift</kbd>+<kbd class="kbd">Enter</kbd> confirm all</span>
 			</div>
 		</AppContainer>
 	</div>

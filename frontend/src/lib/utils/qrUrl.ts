@@ -15,6 +15,11 @@ const log = createLogger({ prefix: 'QrUrl' });
 /** Patterns that indicate a direct Homebox URL (no resolution needed) */
 const HOMEBOX_PATTERNS = [/\/location\/[a-f0-9-]+/i, /\/a\/[^\s/]+/];
 
+// Note: compact tags (e.g. "a123123", "l<uuid>", see scanCode.ts) are
+// intentionally NOT listed here - they don't start with "http://"/"https://"
+// so they already fall through to the "not a URL at all" branch below and
+// are returned unchanged. Don't add them to HOMEBOX_PATTERNS.
+
 /**
  * Resolve a QR code URL, following redirects if needed.
  *

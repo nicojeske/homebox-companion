@@ -45,6 +45,8 @@ export interface StoredImage {
 
 /** Serializable version of ReviewItem */
 export interface StoredReviewItem extends ItemCore, ItemExtended {
+	/** Stable review identity - absent on sessions persisted before this field existed. */
+	reviewKey?: string;
 	sourceImageIndex: number;
 	/** Original image filename for reconstruction */
 	originalFilename?: string;
@@ -228,6 +230,7 @@ export function serializeReviewItem(item: ReviewItem): StoredReviewItem {
 		notes: item.notes,
 		asset_id: item.asset_id,
 		// ReviewItem-specific fields
+		reviewKey: item.reviewKey,
 		sourceImageIndex: item.sourceImageIndex,
 		originalFilename: item.originalFile?.name,
 		originalMimeType: item.originalFile?.type,
@@ -335,6 +338,9 @@ export async function deserializeReviewItem(stored: StoredReviewItem): Promise<R
 		notes: stored.notes,
 		asset_id: stored.asset_id,
 		// ReviewItem-specific fields
+		// Absent on sessions persisted before this field existed - setDetectedItems
+		// assigns a fresh key for those on recovery.
+		reviewKey: stored.reviewKey,
 		sourceImageIndex: stored.sourceImageIndex,
 		originalFile,
 		additionalImages,

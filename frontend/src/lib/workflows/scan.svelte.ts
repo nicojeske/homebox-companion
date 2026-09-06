@@ -229,6 +229,7 @@ class ScanWorkflow {
 		'imageStatuses',
 		'detectedItems',
 		'currentReviewIndex',
+		'hasPrevious',
 		'confirmedItems',
 		'submissionProgress',
 		'itemStatuses',
@@ -303,6 +304,8 @@ class ScanWorkflow {
 							return workflow.reviewService.detectedItems;
 						case 'currentReviewIndex':
 							return workflow.reviewService.currentReviewIndex;
+						case 'hasPrevious':
+							return workflow.reviewService.hasPrevious;
 						case 'confirmedItems':
 							return workflow.reviewService.confirmedItems;
 						case 'submissionProgress':

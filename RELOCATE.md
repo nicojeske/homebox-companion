@@ -22,11 +22,16 @@ Camera QR scanning via `QrScanner.svelte` serves as a fallback.
 
 | Type | Format | Example |
 |------|--------|---------|
-| Location | `https://<host>/location/<uuid>` | `https://homebox.example.com/location/abc-123` |
-| Item | `https://<host>/a/<assetId>` | `https://homebox.example.com/a/000-042` |
+| Location (legacy URL) | `https://<host>/location/<uuid>` | `https://homebox.example.com/location/abc-123` |
+| Item (legacy URL) | `https://<host>/a/<assetId>` | `https://homebox.example.com/a/000-042` |
+| Location (compact tag) | `l<uuid>` | `labc-12300-4500-6700-89000abcdef1` |
+| Item (compact tag) | `a<digits>` | `a123123` → asset ID `123-123` |
 
-Both formats are already handled by the existing `resolveQrUrl()` utility
-(`frontend/src/lib/utils/qrUrl.ts`).
+Legacy URL formats are unwrapped by `resolveQrUrl()` (`frontend/src/lib/utils/qrUrl.ts`);
+all four formats are then parsed into a `{kind, id}` result by `parseScannedCode()`
+(`frontend/src/lib/utils/scanCode.ts`). Compact asset tags carry a bare numeric ID that
+`parseScannedCode()` reformats to Homebox's printed `%03d-%03d` asset ID (`id / 1000` -
+`id % 1000`), matching what Homebox itself prints on labels.
 
 ## Architecture
 

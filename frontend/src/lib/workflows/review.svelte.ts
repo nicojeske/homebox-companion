@@ -51,9 +51,19 @@ export class ReviewService {
 	// DETECTED ITEMS MANAGEMENT
 	// =========================================================================
 
-	/** Set detected items from analysis results */
+	/**
+	 * Set detected items from analysis results.
+	 *
+	 * Assigns a stable `reviewKey` to any item that doesn't already have one
+	 * (a freshly-analyzed item never does; a recovered item from a persisted
+	 * session already carries its original key and keeps it). This is the
+	 * single choke point all detected-item producers funnel through, so it's
+	 * the one place a key needs to be assigned.
+	 */
 	setDetectedItems(items: ReviewItem[]): void {
-		this._detectedItems = items;
+		this._detectedItems = items.map((item) =>
+			item.reviewKey ? item : { ...item, reviewKey: crypto.randomUUID() }
+		);
 		this._currentReviewIndex = 0;
 	}
 
@@ -142,12 +152,27 @@ export class ReviewService {
 	// =========================================================================
 
 	/**
-	 * Confirm the current item and optionally advance to next
+	 * Confirm the current item and optionally advance to next.
+	 *
+	 * If an item with the same `reviewKey` is already confirmed (the user
+	 * navigated Back to an already-confirmed item and is re-confirming it,
+	 * e.g. after an edit), it's replaced in place rather than appended again.
+	 *
 	 * @returns true if there are more items to review, false if review is complete
 	 */
 	confirmCurrentItem(item: ReviewItem): boolean {
 		const confirmed: ConfirmedItem = { ...item, confirmed: true };
-		this._confirmedItems = [...this._confirmedItems, confirmed];
+		const existingIndex = confirmed.reviewKey
+			? this._confirmedItems.findIndex((c) => c.reviewKey === confirmed.reviewKey)
+			: -1;
+
+		if (existingIndex !== -1) {
+			this._confirmedItems = this._confirmedItems.map((c, i) =>
+				i === existingIndex ? confirmed : c
+			);
+		} else {
+			this._confirmedItems = [...this._confirmedItems, confirmed];
+		}
 
 		if (this.hasNext) {
 			this.nextItem();
@@ -157,7 +182,12 @@ export class ReviewService {
 	}
 
 	/**
-	 * Confirm all remaining items from the current index onwards
+	 * Confirm all remaining items from the current index onwards.
+	 *
+	 * If the user navigated Back before long-pressing Confirm All, some of
+	 * these items may already be confirmed - those are replaced in place
+	 * (same de-dup rule as `confirmCurrentItem`) rather than duplicated.
+	 *
 	 * @param currentItemOverride - Optional edited version of the current item to use instead of the detected item
 	 * @returns The number of items confirmed
 	 */
@@ -173,8 +203,13 @@ export class ReviewService {
 			const confirmed: ConfirmedItem = { ...item, confirmed: true };
 			newItems.push(confirmed);
 		}
+
+		const newKeys = new Set(newItems.map((c) => c.reviewKey).filter(Boolean));
+		const remainingExisting = this._confirmedItems.filter(
+			(c) => !c.reviewKey || !newKeys.has(c.reviewKey)
+		);
 		// Batch append all items at once to avoid O(n²) array spreading
-		this._confirmedItems = [...this._confirmedItems, ...newItems];
+		this._confirmedItems = [...remainingExisting, ...newItems];
 		return newItems.length;
 	}
 
@@ -227,6 +262,7 @@ export class ReviewService {
 
 		// Create review item from confirmed item (preserve all fields including compressed URLs)
 		const reviewItem: ReviewItem = {
+			reviewKey: item.reviewKey,
 			name: item.name,
 			quantity: item.quantity,
 			description: item.description,

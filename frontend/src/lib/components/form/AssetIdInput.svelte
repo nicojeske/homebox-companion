@@ -16,6 +16,7 @@
 	import { resolveQrUrl } from '$lib/utils/qrUrl';
 	import { parseScannedCode } from '$lib/utils/scanCode';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
+	import { showToast } from '$lib/stores/ui.svelte';
 
 	interface Props {
 		value: string | null;
@@ -25,6 +26,13 @@
 		/** Whether to show the label (default: true) */
 		showLabel?: boolean;
 		onChange: (value: string | null) => void;
+		/**
+		 * Notified whenever the built-in QR scanner overlay opens/closes.
+		 * Lets a parent page (e.g. one with its own keyboard shortcuts) know
+		 * an unrelated full-screen overlay is covering the page, since the
+		 * scanner's open state otherwise lives entirely inside this component.
+		 */
+		onScannerToggle?: (open: boolean) => void;
 	}
 
 	let {
@@ -33,6 +41,7 @@
 		placeholder = 'e.g., 000-001',
 		showLabel = true,
 		onChange,
+		onScannerToggle,
 	}: Props = $props();
 
 	let showScanner = $state(false);
@@ -46,12 +55,25 @@
 		unsubscribeBle?.();
 	});
 
+	$effect(() => {
+		onScannerToggle?.(showScanner);
+	});
+
 	async function handleScan(scannedText: string) {
 		const resolvedUrl = await resolveQrUrl(scannedText);
 		const parsed = parseScannedCode(resolvedUrl);
-		// If the scanned text isn't a recognised asset tag (e.g. a location
-		// tag, a raw 1D barcode, or manually-entered text), fall back to
-		// treating the resolved text as the raw asset ID.
+
+		if (parsed.kind === 'location') {
+			// A location tag was scanned into an item field - reject rather than
+			// silently storing the location's URL/tag as an asset ID.
+			showToast("That's a location tag, not an item tag.", 'warning');
+			showScanner = false;
+			return;
+		}
+
+		// Bare 1D barcodes and manually-entered text won't match a known
+		// pattern ('unknown') - fall back to treating the resolved text as
+		// the raw asset ID.
 		const assetId = parsed.kind === 'asset' ? parsed.assetId : resolvedUrl.trim();
 		onChange(assetId || null);
 		showScanner = false;

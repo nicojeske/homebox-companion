@@ -36,9 +36,12 @@ export interface GuardResult {
 }
 
 /**
- * Map of workflow status to the appropriate page
+ * Map of workflow status to the appropriate page.
+ *
+ * Single source of truth - also used by `getScanHref` (`lib/navigation/config.ts`)
+ * to compute the bottom-nav Scan tab's target, so the two never drift apart.
  */
-const STATUS_TO_ROUTE: Record<ScanStatus, string> = {
+export const STATUS_TO_ROUTE: Record<ScanStatus, string> = {
 	idle: '/location',
 	location: '/location',
 	capturing: '/capture',
@@ -230,6 +233,21 @@ export const routeGuards = {
 	 * - Requires authentication only
 	 */
 	success: (): boolean => {
+		const result = checkRouteAccess({ auth: true });
+
+		if (!result.allowed && result.redirectTo) {
+			goto(resolveNavHref(result.redirectTo));
+			return false;
+		}
+
+		return true;
+	},
+
+	/**
+	 * Guard for the Move Items (relocate) page
+	 * - Requires authentication only - it's independent of the scan workflow status
+	 */
+	relocate: (): boolean => {
 		const result = checkRouteAccess({ auth: true });
 
 		if (!result.allowed && result.redirectTo) {

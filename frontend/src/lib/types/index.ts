@@ -115,6 +115,17 @@ export interface ThumbnailTransform {
 
 /** Item detected by AI, ready for review */
 export interface ReviewItem extends ItemCore, ItemExtended {
+	/**
+	 * Stable identity for this review item, independent of its position in
+	 * `detectedItems`/`confirmedItems` (both of which get re-indexed by image
+	 * removal, editing a confirmed item, etc.). Optional here because it's
+	 * assigned centrally by `ReviewService.setDetectedItems` (only when
+	 * absent, so recovered items keep their original key) rather than at each
+	 * construction site - by the time an item reaches review it is always set.
+	 * Used to make re-confirming an item (e.g. after navigating Back) an
+	 * update rather than a duplicate append.
+	 */
+	reviewKey?: string;
 	/** Index of the source image in capturedImages array */
 	sourceImageIndex: number;
 	/** Additional images for this specific item */
@@ -203,6 +214,8 @@ export interface ScanState {
 	// Review
 	detectedItems: ReviewItem[];
 	currentReviewIndex: number;
+	/** Whether there's a previous item to navigate back to during review */
+	hasPrevious: boolean;
 	// Confirmation
 	confirmedItems: ConfirmedItem[];
 	// Submission

@@ -10,7 +10,12 @@
 		"skipLibCheck": true,
 		"sourceMap": true,
 		"strict": true,
-		"moduleResolution": "bundler"
+		"moduleResolution": "bundler",
+		// SvelteKit's generated tsconfig restricts "types" to ["node"], which (per
+		// TypeScript's rules for an explicit `types` array) suppresses automatic
+		// inclusion of every other @types/* package - so Web Bluetooth's ambient
+		// declarations (bleScanner.svelte.ts) need to be listed explicitly here.
+		"types": ["node", "web-bluetooth"]
 	}
 	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
 	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files

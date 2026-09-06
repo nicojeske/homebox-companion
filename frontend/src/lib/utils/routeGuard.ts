@@ -288,4 +288,11 @@ export const routeGuards = {
 
 		return true;
 	},
+
+	/**
+	 * Guard for the Scan (scan-to-open) page
+	 * - Requires authentication only - it's independent of the scan workflow status,
+	 *   same as Browse, Move Items, and the item detail page.
+	 */
+	scan: (): boolean => applyRouteGuard({ auth: true }),
 } as const;

@@ -68,11 +68,7 @@ class BleScannerService {
 		try {
 			log.info('Requesting Bluetooth device…');
 			this.device = await navigator.bluetooth.requestDevice({
-				filters: [
-					{ namePrefix: 'HPRT' },
-					{ namePrefix: 'BCST' },
-					{ namePrefix: 'Inateck' },
-				],
+				filters: [{ namePrefix: 'HPRT' }, { namePrefix: 'BCST' }, { namePrefix: 'Inateck' }],
 				optionalServices: [SERVICE_UUID],
 			});
 

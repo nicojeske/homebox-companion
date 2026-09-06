@@ -31,7 +31,7 @@ M6 (LLM usage & cost tracking) — independent, can be done at any time
 |---|-----------|------|--------|
 | 1 | Browse & unified search | [01-browse-search.md](01-browse-search.md) | ✅ Done |
 | 2 | Item detail & full editing | [02-item-detail-full-editing.md](02-item-detail-full-editing.md) | ✅ Done |
-| 3 | Scan-to-open | [03-scan-to-open.md](03-scan-to-open.md) | 📋 Planned |
+| 3 | Scan-to-open | [03-scan-to-open.md](03-scan-to-open.md) | ✅ Done |
 | 4 | Location & tag pages + bulk actions | [04-location-tag-bulk-actions.md](04-location-tag-bulk-actions.md) | 📋 Planned |
 | 5 | AI enrichment of existing items | [05-ai-enrichment.md](05-ai-enrichment.md) | 📋 Planned |
 | 6 | LLM usage & cost tracking | [06-llm-usage-tracking.md](06-llm-usage-tracking.md) | 📋 Planned |

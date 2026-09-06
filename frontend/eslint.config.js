@@ -1,9 +1,13 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
 import svelteParser from 'svelte-eslint-parser';
 import tailwindcss from 'eslint-plugin-tailwindcss';
 import globals from 'globals';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
@@ -74,8 +78,12 @@ export default [
 	{
 		settings: {
 			tailwindcss: {
-				// Path to your tailwind config (relative to eslint.config.js)
-				config: 'tailwind.config.js',
+				// Absolute path to the tailwind config. A bare relative path here
+				// makes eslint-plugin-tailwindcss's tailwindcss-package lookup fail
+				// (tailwind-api-utils computes `pwd = path.dirname(config)`, which for
+				// a bare filename is the non-absolute string ".", and mlly's
+				// file-URL-based resolver throws on that - it needs an absolute base).
+				config: path.join(__dirname, 'tailwind.config.js'),
 				// Support class attributes in Svelte templates
 				callees: ['classnames', 'clsx', 'cn'],
 				// Validate classes in Svelte files

@@ -125,7 +125,11 @@ class ToolExecutor:
             all_schemas = self._schema_cache[0]
         else:
             # Rebuild cache
-            all_schemas = []
+            # Explicit annotation needed: without it, `ty` infers the element type
+            # from the dict literal below (heterogeneous str/dict values) instead of
+            # matching `_schema_cache`'s declared `list[dict[str, Any]]`, which made
+            # `s["function"]["name"]` below look like indexing into a `str`.
+            all_schemas: list[dict[str, Any]] = []
             for tool in self._tools_by_name.values():
                 all_schemas.append(
                     {

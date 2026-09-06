@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { Search, X, MapPin, Tag as TagIcon, Package, ChevronRight } from 'lucide-svelte';
+	import {
+		Search,
+		X,
+		MapPin,
+		Tag as TagIcon,
+		Package,
+		ChevronRight,
+		ScanLine,
+	} from 'lucide-svelte';
 	import AppContainer from '$lib/components/AppContainer.svelte';
 	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
 	import Loader from '$lib/components/Loader.svelte';
@@ -100,9 +108,19 @@
 	<PullToRefresh onRefresh={handleRefresh}>
 		<div class="flex min-h-screen flex-col gap-4 pb-24 pt-4">
 			<!-- Header -->
-			<div class="px-1">
-				<h1 class="text-xl font-semibold text-neutral-100">Browse</h1>
-				<p class="text-body-sm text-neutral-500">Search items, locations, and tags</p>
+			<div class="flex items-center justify-between gap-3 px-1">
+				<div>
+					<h1 class="text-xl font-semibold text-neutral-100">Browse</h1>
+					<p class="text-body-sm text-neutral-500">Search items, locations, and tags</p>
+				</div>
+				<a
+					href={resolve('/scan')}
+					aria-label="Scan a tag"
+					title="Scan a tag"
+					class="flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800/60 text-neutral-300 transition-colors hover:border-neutral-600 hover:bg-neutral-700/50 hover:text-neutral-100"
+				>
+					<ScanLine size={20} strokeWidth={1.5} />
+				</a>
 			</div>
 
 			<!-- Search input -->

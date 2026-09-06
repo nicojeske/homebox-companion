@@ -13,8 +13,7 @@
 	import { routeGuards } from '$lib/utils/routeGuard';
 	import { getInitPromise } from '$lib/services/tokenRefresh';
 	import { createLogger } from '$lib/utils/logger';
-	import { resolveQrUrl } from '$lib/utils/qrUrl';
-	import { parseScannedCode } from '$lib/utils/scanCode';
+	import { resolveScannedCode } from '$lib/services/scanResolver';
 	import type { Location } from '$lib/types';
 	import Button from '$lib/components/Button.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
@@ -262,21 +261,18 @@
 	}
 
 	async function handleScan(decodedText: string) {
+		if (isProcessingQr) return;
 		showQrScanner = false;
 		isProcessingQr = true;
 
 		try {
-			// Resolve shortened URLs (bit.ly, etc.) to their final destination
-			const resolvedUrl = await resolveQrUrl(decodedText);
-
-			// Parse the QR code to extract a location ID. Supports both the legacy
-			// URL tag (https://homebox.example.com/location/{uuid}) and the compact
-			// tag format (l{uuid}).
-			const parsed = parseScannedCode(resolvedUrl);
+			// Resolve shortened URLs (bit.ly, etc.) and parse into a structured code.
+			// Supports both the legacy URL tag (https://homebox.example.com/location/{uuid})
+			// and the compact tag format (l{uuid}).
+			const parsed = await resolveScannedCode(decodedText);
 
 			if (parsed.kind !== 'location') {
 				showToast('Invalid QR code. Not a Homebox location.', 'error');
-				isProcessingQr = false;
 				return;
 			}
 
@@ -287,7 +283,6 @@
 
 			if (!location) {
 				showToast('Location not found in your Homebox.', 'error');
-				isProcessingQr = false;
 				return;
 			}
 

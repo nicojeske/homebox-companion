@@ -7,6 +7,7 @@
 	 * in Homebox immediately. Chips are hidden once accepted or if a tag with
 	 * that name already exists in the store.
 	 */
+	import { SvelteSet } from 'svelte/reactivity';
 	import { tagStore } from '$lib/stores/tags.svelte';
 	import type { FormSize } from './types';
 	import { getLabelClass } from './types';
@@ -23,31 +24,27 @@
 	const labelClass = $derived(getLabelClass(size));
 
 	/** Names currently being created (show spinner) */
-	let pending = $state(new Set<string>());
+	const pending = new SvelteSet<string>();
 
 	/** Names that have been successfully accepted in this session */
-	let accepted = $state(new Set<string>());
+	const accepted = new SvelteSet<string>();
 
 	/** Existing tag names (lowercase) for filtering */
 	const existingNames = $derived(new Set(tagStore.tags.map((t) => t.name.toLowerCase())));
 
 	/** Suggestions that should be shown: not yet accepted, not already in Homebox */
 	const visibleSuggestions = $derived(
-		(suggestedNames ?? []).filter(
-			(n) => !accepted.has(n) && !existingNames.has(n.toLowerCase())
-		)
+		(suggestedNames ?? []).filter((n) => !accepted.has(n) && !existingNames.has(n.toLowerCase()))
 	);
 
 	async function handleAccept(name: string) {
 		if (pending.has(name)) return;
-		pending = new Set(pending).add(name);
+		pending.add(name);
 		try {
 			await onAccept(name);
-			accepted = new Set(accepted).add(name);
+			accepted.add(name);
 		} finally {
-			const next = new Set(pending);
-			next.delete(name);
-			pending = next;
+			pending.delete(name);
 		}
 	}
 </script>
@@ -66,7 +63,9 @@
 					aria-label="Add tag {name}"
 				>
 					{#if isPending}
-						<span class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>
+						<span
+							class="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+						></span>
 					{:else}
 						+
 					{/if}

@@ -10,7 +10,6 @@
 		RotateCcw,
 		Trash2,
 		Package,
-		ExternalLink,
 	} from 'lucide-svelte';
 	import AppContainer from '$lib/components/AppContainer.svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
@@ -20,8 +19,7 @@
 	import type { LocationTreeNode } from '$lib/types';
 	import { items } from '$lib/api/items';
 	import { showToast } from '$lib/stores/ui.svelte';
-	import { resolveQrUrl } from '$lib/utils/qrUrl';
-	import { parseScannedCode } from '$lib/utils/scanCode';
+	import { resolveScannedCode } from '$lib/services/scanResolver';
 	import { getConfig } from '$lib/api/settings';
 	import { createLogger } from '$lib/utils/logger';
 	import { routeGuards } from '$lib/utils/routeGuard';
@@ -103,10 +101,7 @@
 		showQrScanner = false;
 
 		try {
-			const resolved = await resolveQrUrl(rawText);
-			log.debug(`Resolved scan: ${resolved}`);
-
-			const parsed = parseScannedCode(resolved);
+			const parsed = await resolveScannedCode(rawText);
 
 			if (parsed.kind === 'location') {
 				const uuid = parsed.locationId;
@@ -315,7 +310,7 @@
 						<div class="min-w-0">
 							{#if relocateWorkflow.targetLocationPath.length > 0}
 								<p class="mb-0.5 flex flex-wrap items-center gap-x-1 text-xs text-neutral-400">
-									{#each relocateWorkflow.targetLocationPath as ancestor, i}
+									{#each relocateWorkflow.targetLocationPath as ancestor, i (i)}
 										{#if i > 0}
 											<ChevronRight size={12} class="shrink-0 text-neutral-600" />
 										{/if}

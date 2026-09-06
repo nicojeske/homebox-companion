@@ -571,6 +571,7 @@
 					</div>
 					<div class="flex gap-2">
 						{#if duplicateUrl}
+							<!-- eslint-disable svelte/no-navigation-without-resolve -- External URL, not an app route -->
 							<a
 								href={duplicateUrl}
 								target="_blank"
@@ -580,6 +581,7 @@
 								<ExternalLink size={14} strokeWidth={1.5} />
 								View in Homebox
 							</a>
+							<!-- eslint-enable svelte/no-navigation-without-resolve -->
 						{/if}
 						<button
 							type="button"

@@ -224,7 +224,7 @@ class TestBuildTagPrompt:
         result_empty = build_tag_prompt([])
 
         assert "No tags" in result_none
-        assert "omit tagIds" in result_none
+        assert "suggestedTags" in result_none
         assert "No tags" in result_empty
 
     def test_filters_invalid_tags(self) -> None:

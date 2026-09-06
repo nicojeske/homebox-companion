@@ -13,8 +13,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { QrCode } from 'lucide-svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
-	import { resolveQrUrl } from '$lib/utils/qrUrl';
-	import { parseScannedCode } from '$lib/utils/scanCode';
+	import { resolveScannedCode } from '$lib/services/scanResolver';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
 	import { showToast } from '$lib/stores/ui.svelte';
 
@@ -60,8 +59,7 @@
 	});
 
 	async function handleScan(scannedText: string) {
-		const resolvedUrl = await resolveQrUrl(scannedText);
-		const parsed = parseScannedCode(resolvedUrl);
+		const parsed = await resolveScannedCode(scannedText);
 
 		if (parsed.kind === 'location') {
 			// A location tag was scanned into an item field - reject rather than
@@ -74,7 +72,7 @@
 		// Bare 1D barcodes and manually-entered text won't match a known
 		// pattern ('unknown') - fall back to treating the resolved text as
 		// the raw asset ID.
-		const assetId = parsed.kind === 'asset' ? parsed.assetId : resolvedUrl.trim();
+		const assetId = parsed.kind === 'asset' ? parsed.assetId : parsed.raw;
 		onChange(assetId || null);
 		showScanner = false;
 	}

@@ -204,6 +204,10 @@ export class ReviewService {
 			newItems.push(confirmed);
 		}
 
+		// Local scratch value, never assigned to $state and discarded at the end of
+		// this method - a SvelteSet would only add reactivity-tracking overhead with
+		// no reactive consumer.
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity
 		const newKeys = new Set(newItems.map((c) => c.reviewKey).filter(Boolean));
 		const remainingExisting = this._confirmedItems.filter(
 			(c) => !c.reviewKey || !newKeys.has(c.reviewKey)

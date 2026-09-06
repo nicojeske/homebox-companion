@@ -313,6 +313,7 @@ async def get_token(
         return raw_token
 
     # Validate against Homebox
+    client = get_client()
     if client and await client.validate_token(raw_token):
         token_validator.mark_valid(raw_token)
         return raw_token

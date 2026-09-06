@@ -11,9 +11,39 @@ from homebox_companion.ai.images import compress_image_for_upload
 from homebox_companion.homebox import ItemCreate
 
 from ..dependencies import get_client, get_token, get_valid_tag_ids, validate_file_size
-from ..schemas.items import BatchCreateRequest, ItemDetailResponse
+from ..schemas.items import (
+    BatchCreateRequest,
+    ItemDetailResponse,
+    ItemListResponse,
+    ItemLocationRef,
+    ItemSearchResult,
+    ItemTagRef,
+)
 
 router = APIRouter()
+
+
+def _build_search_result(item: dict[str, Any]) -> ItemSearchResult:
+    """Project a raw Homebox item dict (from the /entities list endpoint) into
+    an ItemSearchResult, resolving the 0.26 'parent' field (renamed from
+    'location') the same way homebox_companion.homebox.views does.
+    """
+    parent = item.get("parent") or item.get("location") or {}
+    location = ItemLocationRef(id=parent["id"], name=parent.get("name", "")) if parent.get("id") else None
+    tags = [
+        ItemTagRef(id=tag["id"], name=tag.get("name", "")) for tag in item.get("tags", []) if tag.get("id")
+    ]
+    return ItemSearchResult(
+        id=item["id"],
+        name=item.get("name", ""),
+        description=item.get("description"),
+        quantity=item.get("quantity", 1),
+        assetId=item.get("assetId"),
+        thumbnailId=item.get("thumbnailId"),
+        location=location,
+        tags=tags,
+        updatedAt=item.get("updatedAt"),
+    )
 
 
 @router.get("/items")
@@ -21,30 +51,40 @@ async def list_items(
     token: Annotated[str, Depends(get_token)],
     client: Annotated[HomeboxClient, Depends(get_client)],
     location_id: str | None = Query(None, alias="location_id"),
-) -> list[dict]:
+    q: str | None = Query(None, description="Search query"),
+    tag_ids: str | None = Query(None, alias="tag_ids", description="Comma-separated tag IDs"),
+    page: int | None = Query(None, ge=1),
+    page_size: int | None = Query(None, alias="page_size", ge=1, le=200),
+) -> ItemListResponse:
     """
-    List items, optionally filtered by location.
+    List/search items, optionally filtered by location and/or tags, paginated.
 
-    Returns a simplified list of items suitable for selection UI.
+    Returns a paginated envelope with a richer per-item projection (assetId,
+    description, location, tags, updatedAt) than the original bare list.
     """
-    logger.debug(f"Fetching items for location_id={location_id}")
+    logger.debug(f"Fetching items for location_id={location_id}, q={q}, tag_ids={tag_ids}, page={page}")
 
-    response = await client.list_items(token, location_id=location_id)
-    items = response.get("items", [])
+    tag_id_list = [t for t in tag_ids.split(",") if t] if tag_ids else None
 
-    # Return simplified item data
-    result = [
-        {
-            "id": item["id"],
-            "name": item["name"],
-            "quantity": item.get("quantity", 1),
-            "thumbnailId": item.get("thumbnailId"),
-        }
-        for item in items
-    ]
+    response = await client.list_items(
+        token,
+        location_id=location_id,
+        tag_ids=tag_id_list,
+        query=q,
+        page=page,
+        page_size=page_size,
+    )
+    raw_items = response.get("items", [])
+    results = [_build_search_result(item) for item in raw_items]
 
-    logger.debug(f"Found {len(result)} items")
-    return result
+    logger.debug(f"Found {len(results)} items (total={response.get('total', len(results))})")
+
+    return ItemListResponse(
+        items=results,
+        page=response.get("page") or page or 1,
+        pageSize=response.get("pageSize") or page_size or len(results),
+        total=response.get("total", len(results)),
+    )
 
 
 @router.post("/items")

@@ -46,3 +46,45 @@ class BatchCreateRequest(BaseModel):
 
     items: list[ItemInput]
     location_id: str | None = None
+
+
+class ItemLocationRef(BaseModel):
+    """Minimal location reference embedded in a search result."""
+
+    id: str
+    name: str
+
+
+class ItemTagRef(BaseModel):
+    """Minimal tag reference embedded in a search result."""
+
+    id: str
+    name: str
+
+
+class ItemSearchResult(BaseModel):
+    """Item projection returned by the browse/search endpoint.
+
+    Richer than the legacy bare-list shape (adds assetId, description,
+    location, tags, updatedAt) so the browse UI can render useful context
+    without a follow-up fetch per item.
+    """
+
+    id: str
+    name: str
+    description: str | None = None
+    quantity: int = 1
+    assetId: str | None = None
+    thumbnailId: str | None = None
+    location: ItemLocationRef | None = None
+    tags: list[ItemTagRef] = []
+    updatedAt: str | None = None
+
+
+class ItemListResponse(BaseModel):
+    """Paginated envelope for GET /items, mirroring Homebox's own list shape."""
+
+    items: list[ItemSearchResult]
+    page: int
+    pageSize: int
+    total: int

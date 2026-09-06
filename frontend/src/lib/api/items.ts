@@ -4,7 +4,12 @@
 
 import { request, requestFormData, requestBlobUrl, type BlobUrlResult } from './client';
 import { apiLogger as log } from '../utils/logger';
-import type { BatchCreateRequest, BatchCreateResponse, ItemSummary } from '../types';
+import type {
+	BatchCreateRequest,
+	BatchCreateResponse,
+	ItemListResponse,
+	ItemSummary,
+} from '../types';
 
 export type { BlobUrlResult };
 
@@ -14,6 +19,30 @@ export interface CreateOptions {
 
 export interface UploadOptions {
 	signal?: AbortSignal;
+}
+
+export interface SearchOptions {
+	/** Free-text search query */
+	q?: string;
+	/** Filter to items directly inside this location */
+	locationId?: string;
+	/** Filter to items carrying any of these tag IDs */
+	tagIds?: string[];
+	/** 1-indexed page number */
+	page?: number;
+	/** Items per page */
+	pageSize?: number;
+	signal?: AbortSignal;
+}
+
+/** Build a `?a=1&b=2` query string, omitting undefined/empty values. */
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+	const search = new URLSearchParams();
+	for (const [key, value] of Object.entries(params)) {
+		if (value !== undefined && value !== '') search.set(key, String(value));
+	}
+	const qs = search.toString();
+	return qs ? `?${qs}` : '';
 }
 
 export interface ItemUpdateData {
@@ -33,8 +62,29 @@ export interface ItemDetail {
 }
 
 export const items = {
-	list: (locationId?: string, signal?: AbortSignal) =>
-		request<ItemSummary[]>(`/items${locationId ? `?location_id=${locationId}` : ''}`, { signal }),
+	/**
+	 * List items in a location (lightweight, for pickers).
+	 * Unwraps the paginated envelope for backward-compatible callers.
+	 */
+	list: (locationId?: string, signal?: AbortSignal): Promise<ItemSummary[]> =>
+		request<ItemListResponse>(`/items${locationId ? `?location_id=${locationId}` : ''}`, {
+			signal,
+		}).then((res) => res.items),
+
+	/**
+	 * Search items with free-text query, location/tag filters, and pagination.
+	 * Used by the browse page. Returns the full paginated envelope.
+	 */
+	search: (options: SearchOptions = {}) => {
+		const query = buildQueryString({
+			q: options.q,
+			location_id: options.locationId,
+			tag_ids: options.tagIds?.length ? options.tagIds.join(',') : undefined,
+			page: options.page,
+			page_size: options.pageSize,
+		});
+		return request<ItemListResponse>(`/items${query}`, { signal: options.signal });
+	},
 
 	create: (data: BatchCreateRequest, options: CreateOptions = {}) =>
 		request<BatchCreateResponse>('/items', {

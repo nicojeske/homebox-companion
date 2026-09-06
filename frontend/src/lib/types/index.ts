@@ -311,6 +311,39 @@ export interface AdvancedItemDetails {
 	tag_ids?: string[] | null;
 }
 
+/** Minimal location reference embedded in an item search result */
+export interface ItemLocationRef {
+	id: string;
+	name: string;
+}
+
+/** Minimal tag reference embedded in an item search result */
+export interface ItemTagRef {
+	id: string;
+	name: string;
+}
+
+/** Item projection returned by the browse/search endpoint (GET /items) */
+export interface ItemSearchResult {
+	id: string;
+	name: string;
+	description?: string | null;
+	quantity: number;
+	assetId?: string | null;
+	thumbnailId?: string | null;
+	location?: ItemLocationRef | null;
+	tags: ItemTagRef[];
+	updatedAt?: string | null;
+}
+
+/** Paginated envelope returned by GET /items */
+export interface ItemListResponse {
+	items: ItemSearchResult[];
+	page: number;
+	pageSize: number;
+	total: number;
+}
+
 /** Response from merge operation */
 export interface MergedItemResponse {
 	name: string;

@@ -10,6 +10,7 @@
 
 import { vision, fieldPreferences } from '$lib/api/index';
 import { tagStore } from '$lib/stores/tags.svelte';
+import { showToast } from '$lib/stores/ui.svelte';
 import { workflowLogger as log } from '$lib/utils/logger';
 import type { CapturedImage, ReviewItem, Progress, ImageAnalysisStatus } from '$lib/types';
 
@@ -241,7 +242,7 @@ export class AnalysisService {
 				const primaryCompressed = compressedImages[0];
 				const additionalCompressed = compressedImages.slice(1);
 
-				for (const item of result.items) {
+				for (const [itemIndex, item] of result.items.entries()) {
 					// Add default tag if configured and valid
 					let tagIds = item.tag_ids ?? [];
 					if (validDefaultTagId && !tagIds.includes(validDefaultTagId)) {
@@ -266,12 +267,26 @@ export class AnalysisService {
 						compressedDataUrl,
 						compressedAdditionalDataUrls:
 							compressedAdditionalDataUrls.length > 0 ? compressedAdditionalDataUrls : undefined,
-						// Copy asset_id from source image (only for single-item mode)
-						asset_id:
-							!result.image.separateItems && result.items.length === 1
-								? (result.image.assetId ?? undefined)
-								: undefined,
+						// A per-image asset ID applies only to the first item detected from
+						// that image - if the AI split the photo into more than one item, the
+						// rest need their own tag (see the warning toast below).
+						asset_id: itemIndex === 0 ? (result.image.assetId ?? undefined) : undefined,
 					});
+				}
+
+				// Warn (rather than silently drop) when a photo tagged with an asset ID
+				// turned out to contain more than one item - the ID above only landed on
+				// the first one.
+				if (result.image.assetId && result.items.length > 1) {
+					const firstName = result.items[0]?.name || 'the first item';
+					const remaining = result.items.length - 1;
+					const noun = remaining === 1 ? 'item' : 'items';
+					const verb = remaining === 1 ? 'needs' : 'need';
+					const possessive = remaining === 1 ? 'its' : 'their';
+					showToast(
+						`Asset ID ${result.image.assetId} applied to "${firstName}" - ${remaining} other ${noun} detected in that photo ${verb} ${possessive} own asset ID.`,
+						'warning'
+					);
 				}
 			}
 		}

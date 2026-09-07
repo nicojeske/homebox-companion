@@ -74,6 +74,32 @@ describe('parseScannedCode', () => {
 		});
 	});
 
+	describe('bare printed asset ids (no "a" prefix)', () => {
+		it('parses an already-formatted %03d-%03d id', () => {
+			expect(parseScannedCode('001-110')).toEqual({ kind: 'asset', assetId: '001-110' });
+		});
+
+		it('zero-pads a short dashed id', () => {
+			expect(parseScannedCode('1-110')).toEqual({ kind: 'asset', assetId: '001-110' });
+		});
+
+		it('accepts spaces around the dash', () => {
+			expect(parseScannedCode('001 - 110')).toEqual({ kind: 'asset', assetId: '001-110' });
+		});
+
+		it('does not treat a bare number with no dash as an asset id', () => {
+			expect(parseScannedCode('1110')).toEqual({ kind: 'unknown', raw: '1110' });
+		});
+
+		it('does not mistake a year range for an asset id', () => {
+			expect(parseScannedCode('2024-2025')).toEqual({ kind: 'unknown', raw: '2024-2025' });
+		});
+
+		it('does not match non-numeric text containing a dash', () => {
+			expect(parseScannedCode('abc-def')).toEqual({ kind: 'unknown', raw: 'abc-def' });
+		});
+	});
+
 	describe('compact location tags', () => {
 		const uuid = '123e4567-e89b-12d3-a456-426614174000';
 

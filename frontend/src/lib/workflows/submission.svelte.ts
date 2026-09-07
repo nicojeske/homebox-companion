@@ -221,6 +221,10 @@ export class SubmissionService {
 				description: confirmedItem.description,
 				tag_ids: confirmedItem.tag_ids,
 				parent_id: parentId,
+				// Sent straight through to create now - the backend applies it via its
+				// own follow-up update (Homebox can't accept assetId at create time), so
+				// this no longer needs a second PUT from here after the item exists.
+				asset_id: confirmedItem.asset_id,
 				manufacturer: confirmedItem.manufacturer,
 				model_number: confirmedItem.model_number,
 				serial_number: confirmedItem.serial_number,
@@ -293,36 +297,8 @@ export class SubmissionService {
 						};
 					}
 
-					// Set custom asset ID if provided (must be done via update, not create)
-					let assetIdFailed = false;
-					if (confirmedItem.asset_id) {
-						try {
-							await itemsApi.update(createdItem.id, { assetId: confirmedItem.asset_id }, signal);
-							log.debug(`Set asset ID ${confirmedItem.asset_id} for item ${createdItem.id}`);
-						} catch (error) {
-							// Non-fatal: item created successfully, but asset ID assignment failed
-							// Track this failure to report to user
-							log.warn(
-								`Failed to set asset ID ${confirmedItem.asset_id} for ${confirmedItem.name}:`,
-								error
-							);
-							assetIdFailed = true;
-						}
-					}
-
-					// Determine final status based on all upload/update results
-					if (assetIdFailed) {
-						// Asset ID assignment failed - item created but with issue
-						log.warn(
-							`Asset ID assignment failed for ${confirmedItem.name}, item created without custom ID`
-						);
-						this.itemStatuses = { ...this.itemStatuses, [index]: 'partial_success' };
-						return {
-							status: 'partial_success',
-							error: `Asset ID '${confirmedItem.asset_id}' could not be assigned to '${confirmedItem.name}'`,
-							createdId: createdItem.id,
-						};
-					}
+					// Asset ID (if any) was already applied server-side as part of item
+					// creation - see the `asset_id` field on `itemInput` above.
 
 					// All uploads succeeded
 					const status: ItemSubmissionStatus = 'success';

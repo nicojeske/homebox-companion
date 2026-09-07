@@ -27,6 +27,7 @@ from ..schemas.items import (
     ItemSearchResult,
     ItemTagRef,
     ItemUpdateRequest,
+    normalize_asset_id,
 )
 
 router = APIRouter()
@@ -282,6 +283,11 @@ async def create_items(
 
     created: list[dict[str, Any]] = []
     errors: list[str] = []
+    # Homebox's ensure-asset-ids action is group-wide and unconditionally burns a
+    # sequence number per item it touches, so it should only run when this batch
+    # actually left something without an asset ID (a custom one was supplied and
+    # applied above, or the Homebox instance doesn't auto-increment on create).
+    needs_ensure_asset_ids = False
 
     # Fetch valid tag IDs once for the batch to validate against
     valid_tag_ids = await get_valid_tag_ids(token, client)
@@ -330,22 +336,29 @@ async def create_items(
             item_id = result.get("id")
             logger.info(f"Created item: {result.get('name')} (id: {item_id})")
 
-            # Step 2: If there are extended fields or custom fields, update the item
+            # Step 2: If there are extended fields, custom fields, or a custom asset ID,
+            # update the item. A custom asset ID must go through here too — Homebox's
+            # create endpoint can't accept assetId at all (it auto-assigns one), so this
+            # is the only place the user's chosen ID can ever be applied.
             has_custom = bool(item_input.custom_fields)
-            if item_id and (detected_item.has_extended_fields() or has_custom):
+            if item_id and (detected_item.has_extended_fields() or has_custom or item_input.asset_id):
                 extended_payload = detected_item.get_extended_fields_payload() or {}
-                if extended_payload or has_custom:
+                if extended_payload or has_custom or item_input.asset_id:
                     logger.debug(f"  Updating with extended fields: {extended_payload.keys()}")
                     try:
                         # Get the full item to merge with extended fields
                         full_item = await client.get_item(token, item_id)
-                        # Merge extended fields into the full item data
+                        # Merge extended fields into the full item data. assetId must always
+                        # be included (falling back to the item's own current value) — Homebox's
+                        # update is a full replace, so an omitted assetId wipes the ID Homebox
+                        # just auto-assigned at create time instead of leaving it alone.
                         update_data = {
                             "name": full_item.get("name"),
                             "description": full_item.get("description"),
                             "quantity": full_item.get("quantity"),
                             "parentId": full_item.get("parent", {}).get("id"),
                             "tagIds": [tag.get("id") for tag in full_item.get("tags", []) if tag.get("id")],
+                            "assetId": item_input.asset_id or full_item.get("assetId"),
                             **extended_payload,
                         }
                         # Include custom fields as typed Homebox ItemField objects
@@ -381,6 +394,8 @@ async def create_items(
                         raise update_err
 
             created.append(result)
+            if not result.get("assetId"):
+                needs_ensure_asset_ids = True
         except HomeboxAuthError:
             # Auth failure means all subsequent items will also fail - abort early
             logger.error(f"Authentication failed while creating '{item_input.name}'")
@@ -402,8 +417,9 @@ async def create_items(
 
     logger.info(f"Item creation complete: {len(created)} created, {len(errors)} failed")
 
-    # After all items created, ensure asset IDs are assigned
-    if created:
+    # After all items created, ensure asset IDs are assigned — only if something
+    # still needs one (see `needs_ensure_asset_ids` above).
+    if created and needs_ensure_asset_ids:
         try:
             assigned = await client.ensure_asset_ids(token)
             if assigned > 0:
@@ -432,10 +448,23 @@ async def get_item_by_asset_id_route(
 
     Used by the Move Items feature to look up items from scanned QR codes.
     Returns a simplified view including the item's current location for undo support.
+
+    ``asset_id`` is normalized the same way the frontend's compact-tag scanner does
+    (``a1110``, ``1110``, ``001-110`` all resolve to the same lookup) — the browser
+    already normalizes before calling this route, but non-browser callers (the MCP
+    ``get_item_by_asset_id`` tool, a future API client) shouldn't have to pre-format.
+    An unparseable value degrades to the same 404 as a genuinely missing asset ID.
     """
-    logger.debug(f"Fetching item by asset_id={asset_id}")
     try:
-        item = await client.get_item_by_asset_id(token, asset_id)
+        normalized_asset_id = normalize_asset_id(asset_id)
+    except ValueError:
+        normalized_asset_id = None
+    if normalized_asset_id is None:
+        raise HTTPException(status_code=404, detail=f"No item found with asset ID: {asset_id}")
+
+    logger.debug(f"Fetching item by asset_id={normalized_asset_id}")
+    try:
+        item = await client.get_item_by_asset_id(token, normalized_asset_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 

@@ -165,9 +165,15 @@ def test_detail_missing_attachments_and_fields() -> None:
     assert data["thumbnailId"] is None
 
 
-@pytest.mark.parametrize("asset_id", ["000-001", "by-asset-id-lookalike"])
+@pytest.mark.parametrize("asset_id", ["000-001", "999999"])
 def test_get_item_route_ordering_does_not_swallow_by_asset_id(asset_id: str) -> None:
-    """A new GET /items/{item_id} must not shadow GET /items/by-asset-id/{asset_id}."""
+    """A new GET /items/{item_id} must not shadow GET /items/by-asset-id/{asset_id}.
+
+    The second case uses a distinctly different (but still validly-shaped) literal
+    path segment from the first, to prove the route captures it rather than falling
+    through to some other match — not "000-001" itself, and not a value the asset-ID
+    format validation added later would reject before routing even matters.
+    """
     stub = _StubHomeboxClient(
         BASE_ITEM,
         asset_lookup={"id": "item-1", "name": "Cordless Drill", "assetId": asset_id},

@@ -11,6 +11,7 @@ import { locationStore, type FlatLocation } from '$lib/stores/locations.svelte';
 import { tagStore } from '$lib/stores/tags.svelte';
 import { showToast } from '$lib/stores/ui.svelte';
 import { createLogger } from '$lib/utils/logger';
+import { parseScannedCode } from '$lib/utils/scanCode';
 import type { ItemSearchResult, Tag } from '$lib/types';
 
 const log = createLogger({ prefix: 'Browse' });
@@ -32,6 +33,14 @@ class BrowseWorkflow {
 	private _items = $state<ItemSearchResult[]>([]);
 	private _page = $state(1);
 	private _total = $state(0);
+
+	/**
+	 * The `q` param the last successful `search()` actually used - either the raw
+	 * query, or `#<assetId>` when the query was recognized as an asset tag
+	 * (see `_resolveSearchQuery`). `loadMore()` must page with this, not `_query`
+	 * directly, or later pages would silently fall back to a text search.
+	 */
+	private _effectiveQuery: string | undefined = undefined;
 
 	private _isLoading = $state(false);
 	private _isLoadingMore = $state(false);
@@ -148,15 +157,38 @@ class BrowseWorkflow {
 	// SEARCH
 	// =========================================================================
 
+	/**
+	 * Resolve the raw query box text into the `q` param to actually send.
+	 *
+	 * A query recognized as an asset tag (`a1110`, `001-110`, a scanned
+	 * `/a/000-085` URL, ...) is rewritten to Homebox's own `#<assetId>`
+	 * asset-search syntax so the backend does an exact asset lookup instead of
+	 * a text match on the literal scanned string. Anything else - including a
+	 * bare number with no dash, which stays a plain search - passes through
+	 * unchanged.
+	 */
+	private _resolveSearchQuery(raw: string): { param: string | undefined; isAssetLookup: boolean } {
+		if (!raw) return { param: undefined, isAssetLookup: false };
+		const parsed = parseScannedCode(raw);
+		if (parsed.kind === 'asset') {
+			return { param: `#${parsed.assetId}`, isAssetLookup: true };
+		}
+		return { param: raw, isAssetLookup: false };
+	}
+
 	/** Run a fresh search (page 1), discarding any in-flight results for a superseded query. */
 	async search(): Promise<void> {
 		const token = ++this._searchToken;
 		this._isLoading = true;
 		this._error = null;
 
+		const rawQuery = this._query.trim();
+		const { param: initialParam, isAssetLookup } = this._resolveSearchQuery(rawQuery);
+		let queryParam = initialParam;
+
 		try {
-			const response = await itemsApi.search({
-				q: this._query.trim() || undefined,
+			let response = await itemsApi.search({
+				q: queryParam,
 				locationId: this._locationFilter?.id,
 				tagIds: this._tagFilter ? [this._tagFilter.id] : undefined,
 				page: 1,
@@ -165,6 +197,22 @@ class BrowseWorkflow {
 
 			if (token !== this._searchToken) return; // A newer search superseded this one
 
+			// No item has that asset ID - fall back to a plain text search of what
+			// was actually typed rather than showing a bare empty result for what
+			// looked like a valid tag (e.g. a typo, or a tag from another install).
+			if (isAssetLookup && response.total === 0) {
+				queryParam = rawQuery || undefined;
+				response = await itemsApi.search({
+					q: queryParam,
+					locationId: this._locationFilter?.id,
+					tagIds: this._tagFilter ? [this._tagFilter.id] : undefined,
+					page: 1,
+					pageSize: PAGE_SIZE,
+				});
+				if (token !== this._searchToken) return;
+			}
+
+			this._effectiveQuery = queryParam;
 			this._items = response.items;
 			this._page = response.page;
 			this._total = response.total;
@@ -187,7 +235,10 @@ class BrowseWorkflow {
 
 		try {
 			const response = await itemsApi.search({
-				q: this._query.trim() || undefined,
+				// Page with whatever `search()` actually matched on (raw text, or the
+				// `#assetId` rewrite) - not `_query` directly, which would silently
+				// switch an asset lookup back to a text search from page 2 on.
+				q: this._effectiveQuery,
 				locationId: this._locationFilter?.id,
 				tagIds: this._tagFilter ? [this._tagFilter.id] : undefined,
 				page: this._page + 1,
@@ -214,6 +265,7 @@ class BrowseWorkflow {
 		this._query = '';
 		this._locationFilter = null;
 		this._tagFilter = null;
+		this._effectiveQuery = undefined;
 		this._items = [];
 		this._page = 1;
 		this._total = 0;

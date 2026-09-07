@@ -75,6 +75,24 @@ class TestBuildItemSchema:
         assert ">= 1" in result or "count" in result.lower()
         assert "max 1000" in result or "condition" in result.lower()
 
+    def test_german_output_language_swaps_title_case_for_noun_casing(self) -> None:
+        """With output_language=German and the default name instruction, drop Title Case."""
+        customizations = DEFAULTS.get_effective_customizations()
+
+        result = build_item_schema(customizations, output_language="German")
+
+        assert "Title Case" not in result
+        assert "German orthography" in result
+
+    def test_german_output_language_keeps_user_name_instruction(self) -> None:
+        """A user-overridden name instruction should win over the German casing rule."""
+        customizations = {"name": "CUSTOM: Brand first"}
+
+        result = build_item_schema(customizations, output_language="German")
+
+        assert "CUSTOM: Brand first" in result
+        assert "German orthography" not in result
+
 
 class TestBuildNamingExamples:
     """Test naming examples generation."""
@@ -116,6 +134,33 @@ class TestBuildNamingExamples:
         result = build_naming_examples({})
 
         assert "USER NAMING PREFERENCE" not in result
+
+    def test_german_output_language_uses_german_examples(self) -> None:
+        """With output_language=German and default examples, should use German examples."""
+        customizations = DEFAULTS.get_effective_customizations()
+
+        result = build_naming_examples(customizations, output_language="German")
+
+        assert "Kugellager" in result
+        assert "Ball Bearing" not in result
+
+    def test_german_output_language_keeps_user_examples(self) -> None:
+        """A user-overridden naming_examples value should win over the German default."""
+        custom_examples = '"Example One", "Example Two"'
+        customizations = {"naming_examples": custom_examples}
+
+        result = build_naming_examples(customizations, output_language="German")
+
+        assert "Example One" in result
+        assert "Kugellager" not in result
+
+    def test_non_german_output_language_keeps_english_examples(self) -> None:
+        """Languages without a tailored example set should keep the English defaults."""
+        customizations = DEFAULTS.get_effective_customizations()
+
+        result = build_naming_examples(customizations, output_language="Spanish")
+
+        assert "Ball Bearing" in result
 
 
 class TestBuildExtendedFieldsSchema:
@@ -281,6 +326,19 @@ class TestBuildLanguageInstruction:
         result = build_language_instruction("German")
 
         assert "field names" in result.lower() or "English" in result
+
+    def test_german_includes_orthography_note(self) -> None:
+        """German should get an extra note about capitalizing nouns."""
+        result = build_language_instruction("German")
+
+        assert "GERMAN ORTHOGRAPHY" in result
+        assert "noun" in result.lower()
+
+    def test_other_languages_omit_orthography_note(self) -> None:
+        """Only German should get the orthography note."""
+        result = build_language_instruction("Spanish")
+
+        assert "GERMAN ORTHOGRAPHY" not in result
 
 
 class TestPromptStructureProperties:

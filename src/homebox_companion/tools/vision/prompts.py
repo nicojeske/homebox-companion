@@ -12,6 +12,7 @@ from ...ai.prompts import (
     build_language_instruction,
     build_naming_examples,
     build_tag_prompt,
+    resolve_name_instruction,
 )
 
 if TYPE_CHECKING:
@@ -53,10 +54,10 @@ def build_detection_system_prompt(
     # Build components with customizations
     language_instr = build_language_instruction(output_language)
     critical = build_critical_constraints(single_item)
-    item_schema = build_item_schema(field_preferences)
+    item_schema = build_item_schema(field_preferences, output_language)
     extended_schema = build_extended_fields_schema(field_preferences) if extract_extended_fields else ""
     custom_schema = build_custom_fields_schema(custom_fields or [])
-    naming_examples = build_naming_examples(field_preferences)
+    naming_examples = build_naming_examples(field_preferences, output_language)
     tag_prompt = build_tag_prompt(tags)
 
     return (
@@ -152,10 +153,10 @@ def build_multi_image_system_prompt(
     # Build components with customizations
     language_instr = build_language_instruction(output_language)
     critical = build_critical_constraints(single_item)
-    item_schema = build_item_schema(field_preferences)
+    item_schema = build_item_schema(field_preferences, output_language)
     extended_schema = build_extended_fields_schema(field_preferences) if extract_extended_fields else ""
     custom_schema = build_custom_fields_schema(custom_fields or [])
-    naming_examples = build_naming_examples(field_preferences)
+    naming_examples = build_naming_examples(field_preferences, output_language)
     tag_prompt = build_tag_prompt(tags)
 
     multi_note = (
@@ -209,10 +210,10 @@ def build_discriminatory_system_prompt(
 
     # Build components with customizations
     language_instr = build_language_instruction(output_language)
-    item_schema = build_item_schema(field_preferences)
+    item_schema = build_item_schema(field_preferences, output_language)
     extended_schema = build_extended_fields_schema(field_preferences) if extract_extended_fields else ""
     custom_schema = build_custom_fields_schema(custom_fields or [])
-    naming_examples = build_naming_examples(field_preferences)
+    naming_examples = build_naming_examples(field_preferences, output_language)
     tag_prompt = build_tag_prompt(tags)
 
     return (
@@ -279,7 +280,7 @@ def build_analysis_system_prompt(
     # Build components with customizations (with safe defaults if None)
     field_preferences = field_preferences or {}
     language_instr = build_language_instruction(output_language)
-    naming_examples = build_naming_examples(field_preferences)
+    naming_examples = build_naming_examples(field_preferences, output_language)
     tag_prompt = build_tag_prompt(tags)
     custom_schema = build_custom_fields_schema(custom_fields or [])
 
@@ -289,7 +290,7 @@ def build_analysis_system_prompt(
         item_context += f" - {item_description}"
 
     # Build extended field schema for analysis (always include extended fields)
-    name_instr = field_preferences.get("name", "Title Case, max 255 characters")
+    name_instr = resolve_name_instruction(field_preferences, output_language)
     desc_instr = field_preferences.get("description", "max 1000 chars, condition/attributes only")
     serial_instr = field_preferences.get("serial_number", "S/N when visible")
     model_instr = field_preferences.get("model_number", "product code when visible")

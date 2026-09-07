@@ -62,10 +62,10 @@ async def correct_item(
 
     # Build schemas with customizations
     language_instr = build_language_instruction(output_language)
-    item_schema = build_item_schema(field_preferences)
+    item_schema = build_item_schema(field_preferences, output_language)
     extended_schema = build_extended_fields_schema(field_preferences)
     custom_fields_schema = build_custom_fields_schema(custom_fields or [])
-    naming_examples = build_naming_examples(field_preferences)
+    naming_examples = build_naming_examples(field_preferences, output_language)
     tag_prompt = build_tag_prompt(tags)
 
     system_prompt = (

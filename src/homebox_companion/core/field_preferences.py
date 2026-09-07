@@ -69,7 +69,7 @@ class FieldPreferences(BaseSettings):
     quantity: str = "Count identical items together, separate different variants"
 
     # Manufacturer extraction - env var: HBC_AI_MANUFACTURER
-    manufacturer: str = "Only when brand/logo is VISIBLE. Include recognizable brands only."
+    manufacturer: str = "Only when brand/logo is VISIBLE."
 
     # Model number extraction - env var: HBC_AI_MODEL_NUMBER
     model_number: str = "Only when model/part number TEXT is clearly visible on label"

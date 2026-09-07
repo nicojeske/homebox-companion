@@ -18,6 +18,41 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..core.persistent_settings import CustomFieldDefinition
 
+# German naming/casing differs enough from English defaults (Title Case, English
+# example nouns) that generic guidance produces mixed-language or wrongly-cased
+# output. Only overridden when the "name" field and naming examples are still
+# at their hardcoded defaults - an explicit user override always wins.
+_DEFAULT_NAMING_EXAMPLES = (
+    '"Ball Bearing 6900-2RS 10x22x6mm", '
+    '"Acrylic Paint Vallejo Game Color Bone White", '
+    '"LED Strip COB Green 5V 1M"'
+)
+_GERMAN_NAMING_EXAMPLES = (
+    '"Kugellager 6900-2RS 10x22x6mm", '
+    '"Acrylfarbe Vallejo Game Color Knochenweiß", '
+    '"LED-Streifen COB Grün 5V 1M"'
+)
+_GERMAN_NAME_CASING_NOTE = "capitalize nouns per German orthography, not every word capitalized like in English"
+
+
+def resolve_name_instruction(customizations: dict[str, str], output_language: str | None = None) -> str:
+    """Resolve the effective "name" field instruction, with language-aware casing.
+
+    Shared by build_item_schema() and the analysis prompt builder so the
+    German casing override lives in one place.
+
+    Args:
+        customizations: Dict with effective values for fields (must contain 'name').
+        output_language: Target language for output. See build_item_schema().
+
+    Returns:
+        The name field instruction string.
+    """
+    name_instr = customizations.get("name", "Title Case, max 255 characters")
+    if name_instr.startswith("[Type]") and output_language and output_language.strip().lower() == "german":
+        return f"[Type] [Brand] [Model] [Specs], {_GERMAN_NAME_CASING_NOTE}, item type first for searchability"
+    return name_instr
+
 
 def build_custom_fields_schema(custom_fields: list[CustomFieldDefinition]) -> str:
     """Build custom fields schema section for the AI prompt.
@@ -66,13 +101,19 @@ def build_critical_constraints(single_item: bool = False) -> str:
     )
 
 
-def build_naming_examples(customizations: dict[str, str]) -> str:
+def build_naming_examples(customizations: dict[str, str], output_language: str | None = None) -> str:
     """Build naming examples with optional user override.
 
     Args:
         customizations: Dict with effective values for all fields (required).
             Must contain 'naming_examples' for examples. If 'name' contains
             a custom instruction, adds a user preference note.
+        output_language: Target language for output. When the examples are
+            still at their hardcoded default (i.e. not user-overridden) and
+            a language-specific example set exists (currently German), that
+            set is used instead - English example nouns otherwise bias the
+            model toward English names even when told to output another
+            language.
 
     Returns:
         Naming examples string with optional user preference.
@@ -80,11 +121,10 @@ def build_naming_examples(customizations: dict[str, str]) -> str:
     # Get examples from customizations
     examples = customizations.get("naming_examples", "").strip()
     if not examples:
-        examples = (
-            '"Ball Bearing 6900-2RS 10x22x6mm", '
-            '"Acrylic Paint Vallejo Game Color Bone White", '
-            '"LED Strip COB Green 5V 1M"'
-        )
+        examples = _DEFAULT_NAMING_EXAMPLES
+
+    if examples == _DEFAULT_NAMING_EXAMPLES and output_language and output_language.strip().lower() == "german":
+        examples = _GERMAN_NAMING_EXAMPLES
 
     # Build base with examples
     result = f"""Examples: {examples}"""
@@ -101,17 +141,21 @@ USER NAMING PREFERENCE (takes priority):
     return result
 
 
-def build_item_schema(customizations: dict[str, str]) -> str:
+def build_item_schema(customizations: dict[str, str], output_language: str | None = None) -> str:
     """Build item schema with field instructions integrated inline.
 
     Args:
         customizations: Dict with effective values for fields (name, quantity,
             description). Required - must contain values for all fields.
+        output_language: Target language for output. When the "name" field is
+            still at its hardcoded default and a language-specific casing rule
+            exists (currently German), "Title Case" is swapped for that rule -
+            German capitalizes nouns, not every word.
 
     Returns:
         Item schema string with field instructions.
     """
-    name_instr = customizations.get("name", "Title Case, max 255 characters")
+    name_instr = resolve_name_instruction(customizations, output_language)
     qty_instr = customizations.get("quantity", ">= 1, count of identical items")
     desc_instr = customizations.get("description", "max 1000 chars, condition/attributes only")
     return f"""OUTPUT SCHEMA - Each item must include:
@@ -186,8 +230,19 @@ def build_language_instruction(output_language: str | None) -> str:
     if not output_language or output_language.strip().lower() == "english":
         return ""
 
-    return (
+    language = output_language.strip()
+    instruction = (
         f"\nOUTPUT LANGUAGE: Write all item names, descriptions, and notes "
-        f"in {output_language.strip()}. Keep field names (name, description, etc.) "
+        f"in {language}. Keep field names (name, description, etc.) "
         f"in English for JSON compatibility.\n"
     )
+
+    if language.lower() == "german":
+        # Free-text fields (description, notes) need this too, not just names -
+        # German capitalizes nouns mid-sentence, which English writing habits miss.
+        instruction += (
+            'GERMAN ORTHOGRAPHY: Capitalize every noun (e.g. "Akkuschrauber", "Farbe"); '
+            "do not apply English-style Title Case to adjectives or articles.\n"
+        )
+
+    return instruction

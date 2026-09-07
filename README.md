@@ -402,6 +402,21 @@ Customize how AI formats detected item fields. Set via environment variables or 
 - **Use the Settings page** – Customize AI behavior, define custom fields, and manage LLM profiles without restarting.
 - **Long press to confirm all** – On the review screen, long-press the confirm button to accept all remaining items at once.
 
+## 📱 Install on Your Phone
+
+Homebox Companion is a Progressive Web App (PWA) – it can be installed to your phone's home screen for a full-screen, app-like experience with no browser address bar.
+
+**Requirement: HTTPS.** Installability, camera-based QR scanning, and Bluetooth scanning all require a secure origin. Serve the app through a reverse proxy with a valid TLS certificate (e.g. Caddy, nginx, or Cloudflare Tunnel) – plain `http://` on a LAN IP will not work for these features.
+
+**Android (Chrome):**
+1. Open the app over HTTPS and log in.
+2. Tap the in-app "Install" banner, or use the browser's ⋮ menu → **Install app**.
+3. Launch it from your home screen – it opens full-screen and stays signed in.
+
+You can also install later from **Settings → Install**.
+
+**iOS (Safari):** Tap the Share icon → **Add to Home Screen**. Safari doesn't support the automatic install prompt, so this is the only path on iOS.
+
 ## 📄 License
 
 This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.

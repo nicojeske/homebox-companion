@@ -139,4 +139,7 @@ Design tokens are defined in `tailwind.config.js`. **Always use tokens instead o
 - **Frontend**: Use design system tokens (see table above), not raw Tailwind colors
 - **Backend**: Extended fields (manufacturer, model, serial) require PUT after create
 - **AI**: Customizations replace defaults—don't concatenate instructions
+- **Service worker** (`frontend/src/service-worker.ts`): precaches hashed build assets keyed by
+  `version` from `$service-worker`—a new build gets a new cache automatically. Never cache
+  `/api/*` or non-GET requests (auth, SSE chat streams, vision uploads must always hit the network)
 

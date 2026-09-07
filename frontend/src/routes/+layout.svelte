@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { WifiOff, Download } from 'lucide-svelte';
+	import { WifiOff, Download, Smartphone, X } from 'lucide-svelte';
 	import type { Snippet } from 'svelte';
 	import '../app.css';
 	import Toast from '$lib/components/Toast.svelte';
@@ -11,6 +11,7 @@
 	import { authStore } from '$lib/stores/auth.svelte';
 	import { collectionStore } from '$lib/stores/collection.svelte';
 	import { uiStore, showToast } from '$lib/stores/ui.svelte';
+	import { pwaInstallStore } from '$lib/stores/pwaInstall.svelte';
 	import { getVersion, getConfig, setDemoMode } from '$lib/api';
 	import { setLogLevel } from '$lib/utils/logger';
 
@@ -28,6 +29,18 @@
 	let appVersion = $derived(uiStore.appVersion);
 	let latestVersion = $derived(uiStore.latestVersion);
 	let updateDismissed = $derived(uiStore.updateDismissed);
+	let canInstall = $derived(pwaInstallStore.canInstall);
+
+	let installBannerBusy = $state(false);
+
+	async function handleInstallBanner() {
+		installBannerBusy = true;
+		try {
+			await pwaInstallStore.install();
+		} finally {
+			installBannerBusy = false;
+		}
+	}
 
 	// Track if we've already shown the update toast
 	let updateToastId = $state<number | null>(null);
@@ -104,6 +117,9 @@
 			if ('startViewTransition' in document) {
 				document.documentElement.classList.add('vt-enabled');
 			}
+
+			// Track home-screen install availability (Android/desktop Chrome)
+			pwaInstallStore.init();
 
 			// Initialize auth (check token, refresh if needed)
 			await initializeAuth();
@@ -216,6 +232,34 @@
 		>
 			<WifiOff size={16} strokeWidth={2} />
 			<span>You're offline. Some features may not work.</span>
+		</div>
+	{/if}
+
+	<!-- Install banner - offered once the browser signals the app can be installed -->
+	{#if canInstall && isOnline}
+		<div
+			class="fixed left-0 right-0 z-40 flex items-center justify-center gap-3 border-t border-primary-500/30 bg-primary-500/20 px-4 py-3 text-body-sm text-primary-400 {isAuthenticated
+				? 'bottom-nav-offset'
+				: 'bottom-0'}"
+		>
+			<Smartphone size={16} strokeWidth={2} class="shrink-0" />
+			<span>Install Homebox Companion for full-screen, app-like access.</span>
+			<button
+				type="button"
+				class="min-h-touch min-w-touch shrink-0 rounded-full px-2 py-1 font-medium underline hover:text-primary-300"
+				onclick={handleInstallBanner}
+				disabled={installBannerBusy}
+			>
+				Install
+			</button>
+			<button
+				type="button"
+				class="min-h-touch min-w-touch shrink-0 text-primary-400/70 hover:text-primary-300"
+				onclick={() => pwaInstallStore.dismiss()}
+				aria-label="Dismiss install prompt"
+			>
+				<X size={16} strokeWidth={2} />
+			</button>
 		</div>
 	{/if}
 

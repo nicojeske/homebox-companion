@@ -39,6 +39,27 @@
       "sizes": "180x180",
       "type": "image/png"
     }
+  ],
+  "categories": ["productivity", "utilities"],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "shortcuts": [
+    {
+      "name": "New scan",
+      "url": "/location",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Scan QR",
+      "url": "/scan",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Assistant",
+      "url": "/chat",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
   ]
 }
 

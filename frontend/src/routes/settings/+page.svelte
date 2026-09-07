@@ -16,6 +16,7 @@
 
 	import AccountSection from '$lib/components/settings/AccountSection.svelte';
 	import AboutSection from '$lib/components/settings/AboutSection.svelte';
+	import InstallSection from '$lib/components/settings/InstallSection.svelte';
 	import FieldPrefsSection from '$lib/components/settings/FieldPrefsSection.svelte';
 	import LLMProfilesSection from '$lib/components/settings/LLMProfilesSection.svelte';
 	import LogsSection from '$lib/components/settings/LogsSection.svelte';
@@ -70,6 +71,7 @@
 
 	<AccountSection />
 	<AboutSection />
+	<InstallSection />
 	<LLMProfilesSection />
 	<FieldPrefsSection />
 	<LogsSection />

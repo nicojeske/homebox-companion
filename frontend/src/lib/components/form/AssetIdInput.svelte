@@ -91,12 +91,10 @@
 	 * the input rather than going through `handleScan`, so a compact tag
 	 * like "a123123" would otherwise be stored with its leading "a" - that
 	 * letter only exists on the printed tag to tell asset and location
-	 * codes apart, it isn't part of the asset ID itself. Normalize on blur,
-	 * once the full code has been typed/scanned in.
+	 * codes apart, it isn't part of the asset ID itself. Normalize once the
+	 * full code has been typed/scanned in.
 	 */
-	function handleBlur(e: Event) {
-		const target = e.target as HTMLInputElement;
-		const raw = target.value;
+	function normalize(raw: string): void {
 		if (!raw) return;
 
 		const parsed = parseScannedCode(raw);
@@ -106,6 +104,19 @@
 			showToast("That's a location tag, not an item tag.", 'warning');
 			onChange(null);
 		}
+	}
+
+	function handleBlur(e: Event) {
+		normalize((e.target as HTMLInputElement).value);
+	}
+
+	// Most scanners (camera overlay aside) terminate a scan with an Enter
+	// keystroke rather than moving focus elsewhere, so `blur` alone doesn't
+	// catch it - Enter never inserts a character, so `oninput` misses it too.
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		normalize((e.target as HTMLInputElement).value);
 	}
 
 	function handleScannerClose() {
@@ -129,6 +140,7 @@
 				value={value ?? ''}
 				oninput={handleInputChange}
 				onblur={handleBlur}
+				onkeydown={handleKeydown}
 				{placeholder}
 				{disabled}
 				class="input w-full text-body-sm"

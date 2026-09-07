@@ -138,3 +138,25 @@ query show up already applied when the page renders.
 One scan from the browse screen opens the item's detail page, with both BLE and camera working. **Code
 complete and unit-verified**; live-device verification (BLE scanner, camera viewfinder over HTTPS) is still
 outstanding per the note above.
+
+## Follow-up: live scan on Browse and Item Detail
+
+The scoping decision above ("BLE + camera listen only while `/scan` is mounted, not globally - a global
+listener would collide with `AssetIdInput.svelte`") was revisited once the actual friction became clear:
+with the scanner already connected, requiring a trip through `/scan` to open an item is an unnecessary
+extra step. The collision concern doesn't actually block listening on `/browse` or `/items/[id]` in view
+mode - `AssetIdInput` was never mounted on either.
+
+- `frontend/src/lib/services/scanToOpen.svelte.ts` - the shared `resolveScannedCode` -> `navigateToScannedCode`
+  handler (lifted out of `/scan`'s own `handleScan`) with one module-level re-entrancy guard, so `/scan`,
+  `/browse`, and `/items/[id]` can't double-handle the same scan.
+- `frontend/src/lib/components/BleScannerChip.svelte` - a header-sized connect/status control, added to
+  both `/browse` and `/items/[id]` so a scanner can be connected without visiting `/scan` first (Web
+  Bluetooth's `requestDevice()` needs a user gesture, so this couldn't be automatic).
+- `/browse` now subscribes to `bleScanner` for its whole mounted lifetime, same shape as `/scan`.
+- `/items/[id]` subscribes too, but only acts on a scan while `itemDetailWorkflow.mode !== 'edit'` -
+  `AssetIdInput` is rendered exclusively inside the edit-mode branch of that page, so the two listeners
+  are never simultaneously live for the same scan: edit mode fills the asset ID field (unchanged
+  behavior), view mode navigates to the newly scanned item.
+- A **global** (root-layout) listener is still rejected - it would still collide with `AssetIdInput` on
+  `/review` and `/capture`, which are not part of this change.

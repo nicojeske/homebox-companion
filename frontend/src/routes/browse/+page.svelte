@@ -14,8 +14,11 @@
 	import PullToRefresh from '$lib/components/PullToRefresh.svelte';
 	import Loader from '$lib/components/Loader.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
+	import BleScannerChip from '$lib/components/BleScannerChip.svelte';
 	import { browseWorkflow } from '$lib/workflows/browse.svelte';
 	import { items as itemsApi, type BlobUrlResult } from '$lib/api';
+	import { bleScanner } from '$lib/services/bleScanner.svelte';
+	import { scanToOpen } from '$lib/services/scanToOpen.svelte';
 	import { routeGuards } from '$lib/utils/routeGuard';
 	import { getInitPromise } from '$lib/services/tokenRefresh';
 	import { createLogger } from '$lib/utils/logger';
@@ -29,14 +32,28 @@
 	let searchInputEl: HTMLInputElement | undefined = $state();
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
+	// ---------------------------------------------------------------------------
+	// BLE scanner lifecycle - listens live while this page is mounted, so a
+	// scan opens the item / filters to the location without visiting /scan
+	// first. Same pattern as /scan itself.
+	// ---------------------------------------------------------------------------
+
+	let unsubscribeScan: (() => void) | null = null;
+	let destroyed = false;
+
 	onMount(async () => {
 		await getInitPromise();
 		if (!routeGuards.browse()) return;
+		if (destroyed) return;
+
+		unsubscribeScan = bleScanner.onScan((text) => void scanToOpen.handle(text));
 
 		await browseWorkflow.ensureAuxData();
 	});
 
 	onDestroy(() => {
+		destroyed = true;
+		unsubscribeScan?.();
 		if (debounceTimer) clearTimeout(debounceTimer);
 		for (const revoke of Object.values(thumbnailRevokes)) revoke();
 	});
@@ -113,14 +130,17 @@
 					<h1 class="text-xl font-semibold text-neutral-100">Browse</h1>
 					<p class="text-body-sm text-neutral-500">Search items, locations, and tags</p>
 				</div>
-				<a
-					href={resolve('/scan')}
-					aria-label="Scan a tag"
-					title="Scan a tag"
-					class="flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800/60 text-neutral-300 transition-colors hover:border-neutral-600 hover:bg-neutral-700/50 hover:text-neutral-100"
-				>
-					<ScanLine size={20} strokeWidth={1.5} />
-				</a>
+				<div class="flex shrink-0 items-center gap-2">
+					<BleScannerChip />
+					<a
+						href={resolve('/scan')}
+						aria-label="Scan a tag"
+						title="Scan a tag"
+						class="flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800/60 text-neutral-300 transition-colors hover:border-neutral-600 hover:bg-neutral-700/50 hover:text-neutral-100"
+					>
+						<ScanLine size={20} strokeWidth={1.5} />
+					</a>
+				</div>
 			</div>
 
 			<!-- Search input -->

@@ -21,6 +21,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Skeleton from '$lib/components/Skeleton.svelte';
 	import AttachmentGallery from '$lib/components/AttachmentGallery.svelte';
+	import BleScannerChip from '$lib/components/BleScannerChip.svelte';
 	import {
 		ItemCoreFields,
 		ItemExtendedFields,
@@ -36,6 +37,8 @@
 	import { tagStore } from '$lib/stores/tags.svelte';
 	import { settingsService } from '$lib/workflows/settings.svelte';
 	import { getConfig } from '$lib/api/settings';
+	import { bleScanner } from '$lib/services/bleScanner.svelte';
+	import { scanToOpen } from '$lib/services/scanToOpen.svelte';
 	import { routeGuards } from '$lib/utils/routeGuard';
 	import { getInitPromise } from '$lib/services/tokenRefresh';
 	import { createLogger } from '$lib/utils/logger';
@@ -59,10 +62,28 @@
 	const item = $derived(itemDetailWorkflow.item);
 	const isEditing = $derived(itemDetailWorkflow.mode === 'edit');
 
+	// ---------------------------------------------------------------------------
+	// BLE scanner lifecycle - listens live while this page is mounted, so
+	// scanning another item's tag jumps straight to it. Guarded on `isEditing`
+	// rather than unsubscribed/resubscribed on mode change: `AssetIdInput` is
+	// only mounted in the edit-mode branch below, so the two handlers are
+	// never both live for the same scan - in edit mode the scan fills the
+	// asset ID field exactly as before, in view mode it navigates.
+	// ---------------------------------------------------------------------------
+
+	let unsubscribeScan: (() => void) | null = null;
+	let destroyed = false;
+
 	onMount(async () => {
 		await getInitPromise();
 		if (!routeGuards.itemDetail()) return;
 		if (!itemId) return; // Route always supplies this; guard only satisfies the generic Page type
+		if (destroyed) return;
+
+		unsubscribeScan = bleScanner.onScan((text) => {
+			if (isEditing) return;
+			void scanToOpen.handle(text);
+		});
 
 		await Promise.all([
 			itemDetailWorkflow.load(itemId),
@@ -85,6 +106,8 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
+		unsubscribeScan?.();
 		itemDetailWorkflow.reset();
 	});
 
@@ -172,8 +195,9 @@
 
 <AppContainer>
 	<div class="flex min-h-screen flex-col gap-4 pb-24 pt-4">
-		<div class="px-1">
+		<div class="flex items-center justify-between gap-3 px-1">
 			<BackLink href="/browse" label="Back to Browse" />
+			<BleScannerChip />
 		</div>
 
 		{#if itemDetailWorkflow.isLoading}

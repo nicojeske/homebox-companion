@@ -16,8 +16,7 @@
 	import BackLink from '$lib/components/BackLink.svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
-	import { resolveScannedCode, navigateToScannedCode } from '$lib/services/scanResolver';
-	import { showToast } from '$lib/stores/ui.svelte';
+	import { scanToOpen } from '$lib/services/scanToOpen.svelte';
 	import { createLogger } from '$lib/utils/logger';
 	import { routeGuards } from '$lib/utils/routeGuard';
 	import { getInitPromise } from '$lib/services/tokenRefresh';
@@ -29,13 +28,13 @@
 	// ---------------------------------------------------------------------------
 
 	let showQrScanner = $state(false);
-	let isProcessing = $state(false);
 
 	// ---------------------------------------------------------------------------
 	// BLE scanner lifecycle - only listens while this page is mounted
 	// ---------------------------------------------------------------------------
 
 	let unsubscribeScan: (() => void) | null = null;
+	let destroyed = false;
 
 	onMount(async () => {
 		// Wait for auth initialization to complete to avoid race conditions
@@ -43,6 +42,7 @@
 		await getInitPromise();
 
 		if (!routeGuards.scan()) return;
+		if (destroyed) return;
 
 		unsubscribeScan = bleScanner.onScan(handleScan);
 
@@ -58,28 +58,19 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		unsubscribeScan?.();
 	});
 
 	// ---------------------------------------------------------------------------
-	// Scan handler (shared between BLE, camera, and the ?code= deep link)
+	// Scan handler (shared between BLE, camera, and the ?code= deep link) -
+	// delegates to the shared scanToOpen service so /browse and /items/[id]
+	// use exactly the same resolve+navigate logic and re-entrancy guard.
 	// ---------------------------------------------------------------------------
 
 	async function handleScan(rawText: string): Promise<void> {
-		if (isProcessing) return;
-		isProcessing = true;
 		showQrScanner = false;
-
-		try {
-			const parsed = await resolveScannedCode(rawText);
-			await navigateToScannedCode(parsed);
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			showToast(`Scan error: ${msg}`, 'error');
-			log.error('Scan handling error:', err);
-		} finally {
-			isProcessing = false;
-		}
+		await scanToOpen.handle(rawText);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -177,7 +168,7 @@
 				<button
 					type="button"
 					onclick={openCamera}
-					disabled={isProcessing}
+					disabled={scanToOpen.processing}
 					class="flex items-center gap-2 text-sm text-neutral-400 transition-colors hover:text-neutral-200 disabled:opacity-50"
 				>
 					<Camera size={16} />
@@ -211,7 +202,7 @@
 			</div>
 		</div>
 
-		{#if isProcessing}
+		{#if scanToOpen.processing}
 			<p class="px-1 text-sm text-neutral-500">Looking that up…</p>
 		{/if}
 	</div>

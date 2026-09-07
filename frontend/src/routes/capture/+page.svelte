@@ -20,6 +20,7 @@
 	import StatusIcon from '$lib/components/StatusIcon.svelte';
 	import { AssetIdInput } from '$lib/components/form';
 	import InfoTooltip from '$lib/components/InfoTooltip.svelte';
+	import PhotoCropper from '$lib/components/PhotoCropper.svelte';
 	import {
 		TriangleAlert,
 		RefreshCw,
@@ -50,6 +51,18 @@
 	let additionalCameraInputs: { [key: number]: HTMLInputElement } = {};
 	let analysisAnimationComplete = $state(false);
 	let isStartingAnalysis = $state(false);
+
+	// Queue of newly selected photos awaiting the crop step, processed one at a
+	// time (the crop modal is a full-screen overlay, so only one is ever "in
+	// flight" - queueing just handles multi-file selects/pastes in order).
+	interface PendingCrop {
+		file: File;
+		dataUrl: string;
+		kind: 'main' | 'additional';
+		imageIndex?: number;
+	}
+	let cropQueue = $state<PendingCrop[]>([]);
+	let activeCrop = $derived(cropQueue[0] ?? null);
 
 	// Track object URLs for cleanup (prevents memory leaks)
 	// Note: We only revoke URLs when images are explicitly removed, NOT on component
@@ -214,14 +227,9 @@
 			// instead of duplicating the entire file as a base64 string
 			const previewUrl = createTrackedObjectUrl(file);
 
-			workflow.addImage({
-				file,
-				dataUrl: previewUrl,
-				separateItems: false,
-				extraInstructions: '',
-			});
-			// Collapse all expanded accordions when a new image is added
-			expandedImages.clear();
+			// Queue for the crop step instead of adding directly - the photo is
+			// added to the workflow once the user saves or skips the crop.
+			cropQueue = [...cropQueue, { file, dataUrl: previewUrl, kind: 'main' }];
 		}
 
 		input.value = '';
@@ -231,15 +239,13 @@
 		const input = e.target as HTMLInputElement;
 		if (!input.files) return;
 
-		const newFiles: File[] = [];
-		const newPreviewUrls: string[] = [];
-
 		// Track how many more we can accept
 		const remainingSlots = maxImages - totalImageCount;
+		let queuedCount = 0;
 
 		for (const file of Array.from(input.files)) {
 			// Check total image limit (including additional images)
-			if (newFiles.length >= remainingSlots) {
+			if (queuedCount >= remainingSlots) {
 				showToast(`Maximum ${maxImages} images allowed`, 'warning');
 				break;
 			}
@@ -248,13 +254,10 @@
 
 			// Use Object URL instead of base64 - much more memory efficient
 			const previewUrl = createTrackedObjectUrl(file);
-			newFiles.push(file);
-			newPreviewUrls.push(previewUrl);
-		}
+			queuedCount++;
 
-		// Add all valid files at once (synchronous, no FileReader needed)
-		if (newFiles.length > 0) {
-			workflow.addAdditionalImages(imageIndex, newFiles, newPreviewUrls);
+			// Queue for the crop step instead of adding directly.
+			cropQueue = [...cropQueue, { file, dataUrl: previewUrl, kind: 'additional', imageIndex }];
 		}
 
 		input.value = '';
@@ -280,12 +283,11 @@
 		// Prevent default paste behavior since we're handling an image
 		e.preventDefault();
 
-		const newFiles: File[] = [];
-		const newPreviewUrls: string[] = [];
 		const remainingSlots = maxImages - totalImageCount;
+		let queuedCount = 0;
 
 		for (const file of imageFiles) {
-			if (newFiles.length >= remainingSlots) {
+			if (queuedCount >= remainingSlots) {
 				showToast(`Maximum ${maxImages} images allowed`, 'warning');
 				break;
 			}
@@ -293,14 +295,60 @@
 			if (isFileTooLarge(file)) continue;
 
 			const previewUrl = createTrackedObjectUrl(file);
-			newFiles.push(file);
-			newPreviewUrls.push(previewUrl);
+			queuedCount++;
+
+			cropQueue = [...cropQueue, { file, dataUrl: previewUrl, kind: 'additional', imageIndex }];
 		}
 
-		if (newFiles.length > 0) {
-			workflow.addAdditionalImages(imageIndex, newFiles, newPreviewUrls);
-			log.info(`Pasted ${newFiles.length} image(s) as additional photos for image ${imageIndex}`);
+		if (queuedCount > 0) {
+			log.info(`Pasted ${queuedCount} image(s) as additional photos for image ${imageIndex}`);
 		}
+	}
+
+	// ==========================================================================
+	// CROP QUEUE - process one pending photo at a time through PhotoCropper
+	// ==========================================================================
+
+	/** Add the resolved (cropped or original) photo to the workflow */
+	function commitQueuedImage(file: File, dataUrl: string) {
+		const item = cropQueue[0];
+		if (!item) return;
+
+		if (item.kind === 'main') {
+			workflow.addImage({
+				file,
+				dataUrl,
+				separateItems: false,
+				extraInstructions: '',
+			});
+			// Collapse all expanded accordions when a new image is added
+			expandedImages.clear();
+		} else if (item.imageIndex !== undefined) {
+			workflow.addAdditionalImages(item.imageIndex, [file], [dataUrl]);
+		}
+
+		cropQueue = cropQueue.slice(1);
+	}
+
+	function handleCropSave(croppedFile: File, croppedDataUrl: string) {
+		const item = cropQueue[0];
+		if (!item) return;
+
+		// The cropped preview URL is created by PhotoCropper itself - track it
+		// here so it gets cleaned up the same way as any other image URL.
+		createdObjectUrls.add(croppedDataUrl);
+		// The original (uncropped) preview URL is no longer needed.
+		revokeObjectUrl(item.dataUrl);
+
+		commitQueuedImage(croppedFile, croppedDataUrl);
+	}
+
+	function handleCropSkip() {
+		const item = cropQueue[0];
+		if (!item) return;
+
+		// Cropping is optional - keep the original, uncropped photo.
+		commitQueuedImage(item.file, item.dataUrl);
 	}
 
 	// ==========================================================================
@@ -911,6 +959,15 @@
 		class="hidden"
 	/>
 </div>
+
+{#if activeCrop}
+	<PhotoCropper
+		file={activeCrop.file}
+		dataUrl={activeCrop.dataUrl}
+		onSave={handleCropSave}
+		onCancel={handleCropSkip}
+	/>
+{/if}
 
 <!-- Sticky Analyze button at bottom - above navigation bar -->
 <div

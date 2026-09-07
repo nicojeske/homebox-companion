@@ -668,9 +668,10 @@ class HomeboxClient:
             "id": location_id,
             "name": name,
             "description": description,
+            # Always include parentId (even as null) so callers can explicitly
+            # clear a location's parent, e.g. to undo a move back to top-level.
+            "parentId": parent_id,
         }
-        if parent_id:
-            payload["parentId"] = parent_id
 
         response = await self.client.put(
             f"{self.base_url}/entities/{location_id}",

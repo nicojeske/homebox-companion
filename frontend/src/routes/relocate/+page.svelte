@@ -15,6 +15,7 @@
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
 	import { relocateWorkflow, type MoveLogEntry } from '$lib/workflows/relocate.svelte';
+	import { relocateLocationWorkflow } from '$lib/workflows/relocateLocation.svelte';
 	import { locations } from '$lib/api/locations';
 	import type { LocationTreeNode } from '$lib/types';
 	import { items } from '$lib/api/items';
@@ -34,6 +35,12 @@
 	let showQrScanner = $state(false);
 	let isProcessingQr = $state(false);
 	let homeboxUrl = $state<string>('');
+
+	/** "Move Items" vs "Move Locations". Always opens in Items mode. */
+	let mode = $state<'items' | 'locations'>('items');
+
+	/** The workflow driving the current mode's destination panel. */
+	const activeWorkflow = $derived(mode === 'items' ? relocateWorkflow : relocateLocationWorkflow);
 
 	/** Blob URL cache: itemId → object URL string (for thumbnails) */
 	let thumbnailUrls = $state<Record<string, string>>({});
@@ -56,6 +63,7 @@
 		// Restore a persisted move log (and destination, if scanned recently) from
 		// before a reload. Must happen before any scan handling this page lifetime.
 		await relocateWorkflow.restoreSession();
+		await relocateLocationWorkflow.restoreSession();
 
 		unsubscribeScan = bleScanner.onScan(handleScan);
 		// Load Homebox URL for opening items
@@ -96,12 +104,39 @@
 	}
 
 	async function handleScan(rawText: string): Promise<void> {
-		if (isProcessingQr || relocateWorkflow.processing) return;
+		if (isProcessingQr || relocateWorkflow.processing || relocateLocationWorkflow.processing) {
+			return;
+		}
 		isProcessingQr = true;
 		showQrScanner = false;
 
 		try {
 			const parsed = await resolveScannedCode(rawText);
+
+			if (mode === 'locations') {
+				if (parsed.kind === 'location') {
+					const uuid = parsed.locationId;
+
+					if (!relocateLocationWorkflow.targetLocation) {
+						const [loc, tree] = await Promise.all([locations.get(uuid), locations.tree()]);
+						const ancestors = findAncestors(tree as LocationTreeNode[], uuid) ?? [];
+						relocateLocationWorkflow.setTargetLocation(loc.id, loc.name, ancestors);
+						showToast(`Destination: ${loc.name}`, 'success');
+						return;
+					}
+
+					await relocateLocationWorkflow.processLocationScan(uuid);
+					return;
+				}
+
+				if (parsed.kind === 'asset') {
+					showToast('Scan a location, not an item, in Locations mode.', 'warning');
+					return;
+				}
+
+				showToast('Unrecognised QR code.', 'warning');
+				return;
+			}
 
 			if (parsed.kind === 'location') {
 				const uuid = parsed.locationId;
@@ -183,10 +218,18 @@
 	}
 
 	async function handleUndo(index: number): Promise<void> {
+		if (mode === 'locations') {
+			await relocateLocationWorkflow.undoMove(index);
+			return;
+		}
 		await relocateWorkflow.undoMove(index);
 	}
 
 	function clearLog(): void {
+		if (mode === 'locations') {
+			relocateLocationWorkflow.clearLog();
+			return;
+		}
 		// Revoke all blob URLs before clearing
 		for (const [itemId, revoke] of Object.entries(thumbnailRevokes)) {
 			revoke();
@@ -216,8 +259,10 @@
 		<!-- Header                                                              -->
 		<!-- ------------------------------------------------------------------ -->
 		<div class="flex items-center justify-between px-1">
-			<h1 class="text-xl font-semibold text-neutral-100">Move Items</h1>
-			{#if relocateWorkflow.moveLog.length > 0}
+			<h1 class="text-xl font-semibold text-neutral-100">
+				{mode === 'items' ? 'Move Items' : 'Move Locations'}
+			</h1>
+			{#if activeWorkflow.moveLog.length > 0}
 				<button
 					type="button"
 					onclick={clearLog}
@@ -228,6 +273,30 @@
 					Clear log
 				</button>
 			{/if}
+		</div>
+
+		<!-- ------------------------------------------------------------------ -->
+		<!-- Mode Toggle                                                         -->
+		<!-- ------------------------------------------------------------------ -->
+		<div class="flex gap-1 rounded-xl border border-neutral-700 bg-neutral-800/60 p-1">
+			<button
+				type="button"
+				onclick={() => (mode = 'items')}
+				class="flex-1 rounded-lg py-1.5 text-sm font-medium transition-colors {mode === 'items'
+					? 'bg-primary-500/20 text-primary-300'
+					: 'text-neutral-400 hover:text-neutral-200'}"
+			>
+				Items
+			</button>
+			<button
+				type="button"
+				onclick={() => (mode = 'locations')}
+				class="flex-1 rounded-lg py-1.5 text-sm font-medium transition-colors {mode === 'locations'
+					? 'bg-primary-500/20 text-primary-300'
+					: 'text-neutral-400 hover:text-neutral-200'}"
+			>
+				Locations
+			</button>
 		</div>
 
 		<!-- ------------------------------------------------------------------ -->
@@ -282,7 +351,7 @@
 				<button
 					type="button"
 					onclick={openCamera}
-					disabled={isProcessingQr || relocateWorkflow.processing}
+					disabled={isProcessingQr || activeWorkflow.processing}
 					class="flex items-center gap-2 text-sm text-neutral-400 transition-colors hover:text-neutral-200 disabled:opacity-50"
 				>
 					<Camera size={16} />
@@ -295,7 +364,7 @@
 		<!-- Target Location                                                      -->
 		<!-- ------------------------------------------------------------------ -->
 		<div
-			class="rounded-2xl border {relocateWorkflow.targetLocation
+			class="rounded-2xl border {activeWorkflow.targetLocation
 				? 'border-primary-500/30 bg-primary-500/5'
 				: 'border-neutral-700 bg-neutral-800/60'} p-4"
 		>
@@ -303,14 +372,14 @@
 				Destination Location
 			</p>
 
-			{#if relocateWorkflow.targetLocation}
+			{#if activeWorkflow.targetLocation}
 				<div class="flex items-center justify-between">
 					<div class="flex min-w-0 items-center gap-3">
 						<MapPin size={20} class="shrink-0 text-primary-400" />
 						<div class="min-w-0">
-							{#if relocateWorkflow.targetLocationPath.length > 0}
+							{#if activeWorkflow.targetLocationPath.length > 0}
 								<p class="mb-0.5 flex flex-wrap items-center gap-x-1 text-xs text-neutral-400">
-									{#each relocateWorkflow.targetLocationPath as ancestor, i (i)}
+									{#each activeWorkflow.targetLocationPath as ancestor, i (i)}
 										{#if i > 0}
 											<ChevronRight size={12} class="shrink-0 text-neutral-600" />
 										{/if}
@@ -319,13 +388,13 @@
 								</p>
 							{/if}
 							<span class="text-base font-medium text-neutral-100">
-								{relocateWorkflow.targetLocation.name}
+								{activeWorkflow.targetLocation.name}
 							</span>
 						</div>
 					</div>
 					<button
 						type="button"
-						onclick={() => relocateWorkflow.clearTargetLocation()}
+						onclick={() => activeWorkflow.clearTargetLocation()}
 						class="rounded-lg px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-700/50 hover:text-neutral-200"
 					>
 						Clear
@@ -334,102 +403,183 @@
 			{:else}
 				<div class="flex items-center gap-3 text-neutral-500">
 					<MapPin size={20} class="shrink-0" />
-					<p class="text-sm">Scan a location QR code to set the destination.</p>
+					<p class="text-sm">
+						{mode === 'items'
+							? 'Scan a location QR code to set the destination.'
+							: 'Scan a location QR code to set the destination, then scan another location to move it here.'}
+					</p>
 				</div>
 			{/if}
 		</div>
 
-		<!-- ------------------------------------------------------------------ -->
-		<!-- Move Log                                                             -->
-		<!-- ------------------------------------------------------------------ -->
-		{#if relocateWorkflow.moveLog.length > 0}
-			<div>
-				<p class="mb-2 px-1 text-xs font-medium uppercase tracking-wider text-neutral-500">
-					{relocateWorkflow.moveLog.length}
-					{relocateWorkflow.moveLog.length === 1 ? 'item' : 'items'} moved this session
-				</p>
+		{#if mode === 'items'}
+			<!-- ------------------------------------------------------------------ -->
+			<!-- Item Move Log                                                       -->
+			<!-- ------------------------------------------------------------------ -->
+			{#if relocateWorkflow.moveLog.length > 0}
+				<div>
+					<p class="mb-2 px-1 text-xs font-medium uppercase tracking-wider text-neutral-500">
+						{relocateWorkflow.moveLog.length}
+						{relocateWorkflow.moveLog.length === 1 ? 'item' : 'items'} moved this session
+					</p>
 
-				<ul class="flex flex-col gap-2">
-					{#each relocateWorkflow.moveLog as entry, index (entry.itemId + entry.movedAt.toISOString())}
-						<li
-							class="flex items-center gap-3 rounded-2xl border {entry.undone
-								? 'border-neutral-700/50 bg-neutral-800/30 opacity-60'
-								: 'border-neutral-700 bg-neutral-800/60'} p-3 transition-opacity"
-						>
-							<!-- Thumbnail -->
-							<div class="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-700">
-								{#if thumbnailUrls[entry.itemId]}
-									<img
-										src={thumbnailUrls[entry.itemId]}
-										alt={entry.itemName}
-										class="h-full w-full object-cover"
-									/>
-								{:else}
-									<div class="flex h-full w-full items-center justify-center text-neutral-500">
-										<Package size={20} />
-									</div>
-								{/if}
-							</div>
-
-							<!-- Item info (clickable) -->
-							<button
-								type="button"
-								onclick={() => openItemInHomebox(entry)}
-								disabled={entry.undone}
-								class="min-w-0 flex-1 text-left disabled:cursor-default"
-								title={entry.undone ? 'Item was undone' : 'Click to open in Homebox'}
+					<ul class="flex flex-col gap-2">
+						{#each relocateWorkflow.moveLog as entry, index (entry.itemId + entry.movedAt.toISOString())}
+							<li
+								class="flex items-center gap-3 rounded-2xl border {entry.undone
+									? 'border-neutral-700/50 bg-neutral-800/30 opacity-60'
+									: 'border-neutral-700 bg-neutral-800/60'} p-3 transition-opacity"
 							>
-								<p
-									class="truncate text-sm font-medium {entry.undone
-										? 'text-neutral-500 line-through'
-										: 'text-neutral-100 hover:text-primary-300'} transition-colors"
+								<!-- Thumbnail -->
+								<div class="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-neutral-700">
+									{#if thumbnailUrls[entry.itemId]}
+										<img
+											src={thumbnailUrls[entry.itemId]}
+											alt={entry.itemName}
+											class="h-full w-full object-cover"
+										/>
+									{:else}
+										<div class="flex h-full w-full items-center justify-center text-neutral-500">
+											<Package size={20} />
+										</div>
+									{/if}
+								</div>
+
+								<!-- Item info (clickable) -->
+								<button
+									type="button"
+									onclick={() => openItemInHomebox(entry)}
+									disabled={entry.undone}
+									class="min-w-0 flex-1 text-left disabled:cursor-default"
+									title={entry.undone ? 'Item was undone' : 'Click to open in Homebox'}
 								>
-									{entry.itemName}
-								</p>
-								<p class="truncate text-xs text-neutral-400">
-									{entry.previousLocationName ?? '—'}
-									→
-									{entry.targetLocationName}
-								</p>
-								<p class="text-xs text-neutral-600">{formatTime(entry.movedAt)}</p>
-							</button>
+									<p
+										class="truncate text-sm font-medium {entry.undone
+											? 'text-neutral-500 line-through'
+											: 'text-neutral-100 hover:text-primary-300'} transition-colors"
+									>
+										{entry.itemName}
+									</p>
+									<p class="truncate text-xs text-neutral-400">
+										{entry.previousLocationName ?? '—'}
+										→
+										{entry.targetLocationName}
+									</p>
+									<p class="text-xs text-neutral-600">{formatTime(entry.movedAt)}</p>
+								</button>
 
-							<!-- Undo button -->
-							<button
-								type="button"
-								onclick={() => handleUndo(index)}
-								disabled={entry.undone || relocateWorkflow.processing}
-								class="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium {entry.undone
-									? 'cursor-default text-neutral-600'
-									: 'text-neutral-400 hover:bg-neutral-700/50 hover:text-neutral-200'} transition-colors disabled:opacity-50"
-								title={entry.undone ? 'Already undone' : 'Undo this move'}
-							>
-								<RotateCcw size={12} />
-								{entry.undone ? 'Undone' : 'Undo'}
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</div>
+								<!-- Undo button -->
+								<button
+									type="button"
+									onclick={() => handleUndo(index)}
+									disabled={entry.undone || relocateWorkflow.processing}
+									class="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium {entry.undone
+										? 'cursor-default text-neutral-600'
+										: 'text-neutral-400 hover:bg-neutral-700/50 hover:text-neutral-200'} transition-colors disabled:opacity-50"
+									title={entry.undone ? 'Already undone' : 'Undo this move'}
+								>
+									<RotateCcw size={12} />
+									{entry.undone ? 'Undone' : 'Undo'}
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{:else}
+				<!-- Empty state -->
+				<div
+					class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-neutral-700 py-12 text-neutral-600"
+				>
+					<Package size={32} strokeWidth={1.5} />
+					<p class="text-sm">No items moved yet.</p>
+					<p class="text-xs text-neutral-700">
+						{#if relocateWorkflow.targetLocation}
+							Scan an item QR code to move it.
+						{:else}
+							Scan a location QR code first.
+						{/if}
+					</p>
+				</div>
+			{/if}
 		{:else}
-			<!-- Empty state -->
-			<div
-				class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-neutral-700 py-12 text-neutral-600"
-			>
-				<Package size={32} strokeWidth={1.5} />
-				<p class="text-sm">No items moved yet.</p>
-				<p class="text-xs text-neutral-700">
-					{#if relocateWorkflow.targetLocation}
-						Scan an item QR code to move it.
-					{:else}
-						Scan a location QR code first.
-					{/if}
-				</p>
-			</div>
+			<!-- ------------------------------------------------------------------ -->
+			<!-- Location Move Log                                                   -->
+			<!-- ------------------------------------------------------------------ -->
+			{#if relocateLocationWorkflow.moveLog.length > 0}
+				<div>
+					<p class="mb-2 px-1 text-xs font-medium uppercase tracking-wider text-neutral-500">
+						{relocateLocationWorkflow.moveLog.length}
+						{relocateLocationWorkflow.moveLog.length === 1 ? 'location' : 'locations'} moved this session
+					</p>
+
+					<ul class="flex flex-col gap-2">
+						{#each relocateLocationWorkflow.moveLog as entry, index (entry.locationId + entry.movedAt.toISOString())}
+							<li
+								class="flex items-center gap-3 rounded-2xl border {entry.undone
+									? 'border-neutral-700/50 bg-neutral-800/30 opacity-60'
+									: 'border-neutral-700 bg-neutral-800/60'} p-3 transition-opacity"
+							>
+								<!-- Icon -->
+								<div
+									class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-neutral-700 text-neutral-500"
+								>
+									<MapPin size={20} />
+								</div>
+
+								<!-- Location info -->
+								<div class="min-w-0 flex-1">
+									<p
+										class="truncate text-sm font-medium {entry.undone
+											? 'text-neutral-500 line-through'
+											: 'text-neutral-100'} transition-colors"
+									>
+										{entry.locationName}
+									</p>
+									<p class="truncate text-xs text-neutral-400">
+										{entry.previousParentName ?? 'Top level'}
+										→
+										{entry.targetLocationName}
+									</p>
+									<p class="text-xs text-neutral-600">{formatTime(entry.movedAt)}</p>
+								</div>
+
+								<!-- Undo button -->
+								<button
+									type="button"
+									onclick={() => handleUndo(index)}
+									disabled={entry.undone || relocateLocationWorkflow.processing}
+									class="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium {entry.undone
+										? 'cursor-default text-neutral-600'
+										: 'text-neutral-400 hover:bg-neutral-700/50 hover:text-neutral-200'} transition-colors disabled:opacity-50"
+									title={entry.undone ? 'Already undone' : 'Undo this move'}
+								>
+									<RotateCcw size={12} />
+									{entry.undone ? 'Undone' : 'Undo'}
+								</button>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{:else}
+				<!-- Empty state -->
+				<div
+					class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-neutral-700 py-12 text-neutral-600"
+				>
+					<MapPin size={32} strokeWidth={1.5} />
+					<p class="text-sm">No locations moved yet.</p>
+					<p class="text-xs text-neutral-700">
+						{#if relocateLocationWorkflow.targetLocation}
+							Scan a location QR code to move it here.
+						{:else}
+							Scan a location QR code first.
+						{/if}
+					</p>
+				</div>
+			{/if}
 		{/if}
 
 		<!-- Processing indicator -->
-		{#if relocateWorkflow.processing}
+		{#if activeWorkflow.processing}
 			<div class="fixed bottom-20 left-1/2 -translate-x-1/2">
 				<div
 					class="rounded-full border border-neutral-700 bg-neutral-800 px-4 py-2 text-sm text-neutral-300 shadow-lg"

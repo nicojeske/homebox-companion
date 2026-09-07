@@ -14,6 +14,7 @@
 	import { QrCode } from 'lucide-svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import { resolveScannedCode } from '$lib/services/scanResolver';
+	import { parseScannedCode } from '$lib/utils/scanCode';
 	import { bleScanner } from '$lib/services/bleScanner.svelte';
 	import { showToast } from '$lib/stores/ui.svelte';
 
@@ -85,6 +86,28 @@
 		onChange(newValue || null);
 	}
 
+	/**
+	 * Keyboard-wedge barcode scanners (and manual entry) type straight into
+	 * the input rather than going through `handleScan`, so a compact tag
+	 * like "a123123" would otherwise be stored with its leading "a" - that
+	 * letter only exists on the printed tag to tell asset and location
+	 * codes apart, it isn't part of the asset ID itself. Normalize on blur,
+	 * once the full code has been typed/scanned in.
+	 */
+	function handleBlur(e: Event) {
+		const target = e.target as HTMLInputElement;
+		const raw = target.value;
+		if (!raw) return;
+
+		const parsed = parseScannedCode(raw);
+		if (parsed.kind === 'asset' && parsed.assetId !== raw) {
+			onChange(parsed.assetId);
+		} else if (parsed.kind === 'location') {
+			showToast("That's a location tag, not an item tag.", 'warning');
+			onChange(null);
+		}
+	}
+
 	function handleScannerClose() {
 		showScanner = false;
 	}
@@ -105,6 +128,7 @@
 				id="asset-id-input"
 				value={value ?? ''}
 				oninput={handleInputChange}
+				onblur={handleBlur}
 				{placeholder}
 				{disabled}
 				class="input w-full text-body-sm"

@@ -160,9 +160,18 @@ class BleScannerService {
 		// We have a complete message
 		log.debug(`Complete scan message received (${this.scanBuffer.length}B total)`);
 
-		// Format: [control_byte(at index 0)] [data...] [newline(at newlineIndex)] [checksum(at newlineIndex+1)]
-		// Extract data: from index 1 (skip control) to newlineIndex (exclude newline)
-		const dataBytes = this.scanBuffer.slice(1, newlineIndex);
+		// Format: [control_byte(s)] [data...] [newline(at newlineIndex)] [checksum(at newlineIndex+1)]
+		// The header isn't reliably a single byte - observed scans carry a second
+		// non-printable byte (e.g. 0x06) right after the one at index 0, which
+		// `.trim()` doesn't touch since it only strips whitespace. Skip index 0,
+		// then any further control bytes, so a stray one never ends up glued to
+		// the front of the decoded text (breaking the "a123123" pattern match
+		// downstream and showing up as a garbage character in the UI).
+		let dataStart = 1;
+		while (dataStart < newlineIndex && this.scanBuffer[dataStart] < 0x20) {
+			dataStart++;
+		}
+		const dataBytes = this.scanBuffer.slice(dataStart, newlineIndex);
 		const text = new TextDecoder('utf-8').decode(new Uint8Array(dataBytes)).trim();
 
 		log.info(`Decoded scan text: ${text}`);

@@ -73,6 +73,18 @@
 
 	let unsubscribeScan: (() => void) | null = null;
 	let destroyed = false;
+	let ready = $state(false);
+
+	// Reactive on `itemId` (not just mount): scanning another tag while this
+	// page is open navigates via goto() to the same route with a new param,
+	// which SvelteKit handles by reusing this component instance rather than
+	// remounting it - so the load has to be keyed off `itemId` itself to pick
+	// up the new item.
+	$effect(() => {
+		const id = itemId;
+		if (!ready || !id) return;
+		void itemDetailWorkflow.load(id);
+	});
 
 	onMount(async () => {
 		await getInitPromise();
@@ -85,8 +97,9 @@
 			void scanToOpen.handle(text);
 		});
 
+		ready = true;
+
 		await Promise.all([
-			itemDetailWorkflow.load(itemId),
 			locationStore.flatList.length > 0 ? Promise.resolve() : locationNavigator.loadTree(),
 			tagStore.fetchTags(),
 		]);

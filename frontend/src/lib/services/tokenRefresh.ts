@@ -3,7 +3,7 @@
  * Handles automatic token refresh and scheduling with retry logic
  */
 import { authStore } from '../stores/auth.svelte';
-import { auth } from '../api';
+import { auth, getConfig } from '../api';
 import { authLogger as log } from '../utils/logger';
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -222,6 +222,21 @@ function stopVisibilityListener(): void {
 export async function initializeAuth(): Promise<void> {
 	log.debug('[AUTH INIT] initializeAuth() starting');
 	try {
+		// Check if the server is running in static API-key mode (HBC_HOMEBOX_API_KEY).
+		// If so, skip the entire token-based flow — there's no login/refresh to manage.
+		try {
+			const config = await getConfig();
+			if (config.skip_login) {
+				log.debug('[AUTH INIT] Server reports skip_login, enabling static auth mode');
+				authStore.setStaticMode();
+				return;
+			}
+		} catch (error) {
+			// Config fetch failed (network error, etc.) - fall through to normal
+			// token-based flow rather than blocking initialization.
+			log.debug('[AUTH INIT] Failed to fetch config for skip_login check:', error);
+		}
+
 		const currentToken = authStore.token;
 		if (!currentToken) {
 			log.debug('[AUTH INIT] No token found, skipping initialization');

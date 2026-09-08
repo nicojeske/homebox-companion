@@ -116,6 +116,12 @@ async def login(request: LoginRequest, client_request: Request) -> LoginResponse
 
     Rate limited to prevent brute-force attacks (configurable via HBC_AUTH_RATE_LIMIT_RPM).
     """
+    if settings.skip_login:
+        raise HTTPException(
+            status_code=400,
+            detail="Login is disabled when HBC_HOMEBOX_API_KEY is configured",
+        )
+
     # Verify rate limit
     _limiter.check(client_request, settings.auth_rate_limit_rpm, context="login attempts")
 
@@ -141,6 +147,12 @@ async def refresh_token(
     Exchanges the current valid token for a new one with extended expiry.
     Returns the new token and expiry time.
     """
+    if settings.skip_login:
+        raise HTTPException(
+            status_code=400,
+            detail="Token refresh is disabled when HBC_HOMEBOX_API_KEY is configured",
+        )
+
     token = await get_token(authorization)
     client = get_client()
 
@@ -160,6 +172,12 @@ async def logout(
 
     Calls the Homebox server to revoke the token so it can no longer be used.
     """
+    if settings.skip_login:
+        raise HTTPException(
+            status_code=400,
+            detail="Logout is disabled when HBC_HOMEBOX_API_KEY is configured",
+        )
+
     token = await get_token(authorization)
     client = get_client()
     await client.logout(token)

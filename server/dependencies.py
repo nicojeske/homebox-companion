@@ -296,7 +296,14 @@ async def get_token(
     network blips during per-request pre-validation (the root cause of issue
     #117). Set HBC_AUTH_DISABLED=true to skip companion-side re-validation
     entirely — the token is still forwarded to Homebox on every API call.
+
+    When HBC_HOMEBOX_API_KEY is set (single-user mode), the configured API key
+    is always returned regardless of the Authorization header, so the login
+    page and per-request token handling can be skipped entirely.
     """
+    if settings.skip_login:
+        return settings.homebox_api_key.strip()
+
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
     if not authorization.startswith("Bearer "):

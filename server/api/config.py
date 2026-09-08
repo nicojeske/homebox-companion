@@ -23,6 +23,7 @@ class ConfigResponse(BaseModel):
     capture_max_images: int
     capture_max_file_size_mb: int
     print_enabled: bool
+    skip_login: bool
 
 
 @router.get("/config", response_model=ConfigResponse)
@@ -43,4 +44,5 @@ async def get_config() -> ConfigResponse:
         capture_max_images=settings.capture_max_images,
         capture_max_file_size_mb=settings.capture_max_file_size_mb,
         print_enabled=settings.print_enabled,
+        skip_login=settings.skip_login,
     )

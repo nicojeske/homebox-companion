@@ -52,8 +52,10 @@
 		</div>
 	{/if}
 
-	<Button variant="danger" full onclick={handleLogout}>
-		<LogOut size={20} strokeWidth={1.5} />
-		<span>Sign Out</span>
-	</Button>
+	{#if !authStore.isStaticAuth}
+		<Button variant="danger" full onclick={handleLogout}>
+			<LogOut size={20} strokeWidth={1.5} />
+			<span>Sign Out</span>
+		</Button>
+	{/if}
 </section>

@@ -123,6 +123,8 @@ export interface ConfigResponse {
 	capture_max_images: number;
 	capture_max_file_size_mb: number;
 	print_enabled: boolean;
+	/** True when HBC_HOMEBOX_API_KEY is configured server-side; login page should be skipped */
+	skip_login: boolean;
 }
 
 export const getConfig = () => request<ConfigResponse>('/config');

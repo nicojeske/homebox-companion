@@ -69,8 +69,11 @@ class AuthStore {
 	/** Whether the session has expired (shows re-auth modal) */
 	private _sessionExpired = $state(false);
 
-	/** Whether user is authenticated - derived from token presence */
-	private _isAuthenticated = $derived.by(() => !!this._token);
+	/** Whether the app is running in static API-key mode (HBC_HOMEBOX_API_KEY, no per-user login) */
+	private _staticAuth = $state(false);
+
+	/** Whether user is authenticated - derived from token presence or static API-key mode */
+	private _isAuthenticated = $derived.by(() => !!this._token || this._staticAuth);
 
 	// =========================================================================
 	// GETTERS (read-only access to state)
@@ -104,6 +107,11 @@ class AuthStore {
 	/** Check if session has expired */
 	get sessionExpired(): boolean {
 		return this._sessionExpired;
+	}
+
+	/** Check if running in static API-key mode (no per-user login/logout) */
+	get isStaticAuth(): boolean {
+		return this._staticAuth;
 	}
 
 	// =========================================================================
@@ -209,6 +217,21 @@ class AuthStore {
 	}
 
 	/**
+	 * Enable static API-key mode (server has HBC_HOMEBOX_API_KEY configured).
+	 * The backend authenticates every request with its own configured key
+	 * regardless of what's sent, so we only need a placeholder token to
+	 * satisfy header-building code — its value is never actually checked.
+	 * No refresh timer is scheduled since there's no real token lifecycle.
+	 */
+	setStaticMode(): void {
+		log.debug('[AUTH] Enabling static API-key mode (skip_login)');
+		this._token = 'static-api-key';
+		this._expiresAt = null;
+		this._sessionExpired = false;
+		this._staticAuth = true;
+	}
+
+	/**
 	 * Schedule token refresh via dynamic import.
 	 * Dynamic import avoids circular dependency with tokenRefresh.ts.
 	 */
@@ -232,6 +255,12 @@ class AuthStore {
 	 * happens asynchronously in the background via cleanupRelatedStores().
 	 */
 	logout(): void {
+		if (this._staticAuth) {
+			// Nothing to log out of in static API-key mode
+			log.debug('[AUTH] logout() called in static API-key mode, ignoring');
+			return;
+		}
+
 		const expiresAt = this._expiresAt;
 		const remaining = expiresAt ? expiresAt.getTime() - Date.now() : null;
 		log.info(

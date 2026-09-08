@@ -6,6 +6,11 @@ clashes with other applications on the same system.
 Environment Variables:
     HBC_HOMEBOX_URL: Base URL of your Homebox instance (default: demo server).
         We automatically append /api/v1 to this URL for API calls.
+    HBC_HOMEBOX_API_KEY: Homebox API key for single-user deployments. When set,
+        the login page is skipped entirely and every request to Homebox is
+        authenticated with this key server-side. Intended for setups where the
+        companion app already sits behind its own access control (e.g. a
+        reverse proxy with SSO) and a per-user login is unnecessary.
     HBC_LINK_BASE_URL: Optional public-facing URL for Homebox links shown to users.
         Defaults to HBC_HOMEBOX_URL if not set. Useful when the API is accessed
         internally (e.g., 127.0.0.1) but users access via a public domain.
@@ -88,6 +93,8 @@ class Settings(BaseSettings):
     homebox_url: str = DEMO_HOMEBOX_URL
     # Optional public-facing URL for links (defaults to homebox_url)
     link_base_url: str = ""
+    # Homebox API key - when set, skips login and authenticates all requests server-side
+    homebox_api_key: str = ""
 
     # Backward compatibility: Also accepts HBC_OPENAI_API_KEY and HBC_OPENAI_MODEL
     # These are legacy env vars from before the LiteLLM migration
@@ -164,6 +171,12 @@ class Settings(BaseSettings):
         """Full Homebox API URL with /api/v1 path appended."""
         base = self.homebox_url.rstrip("/")
         return f"{base}/api/v1"
+
+    @computed_field
+    @property
+    def skip_login(self) -> bool:
+        """True when a Homebox API key is configured, bypassing the login page."""
+        return bool(self.homebox_api_key.strip())
 
     @computed_field
     @property

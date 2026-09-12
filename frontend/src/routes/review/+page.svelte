@@ -19,9 +19,8 @@
 		ItemCoreFields,
 		ItemExtendedFields,
 		ItemCustomFields,
-		TagSelector,
 		AssetIdInput,
-		SuggestedTagChips,
+		TagPickerModal,
 	} from '$lib/components/form';
 	import AppContainer from '$lib/components/AppContainer.svelte';
 	import ImagesPanel from '$lib/components/ImagesPanel.svelte';
@@ -39,6 +38,8 @@
 		ChevronLeft,
 		Check,
 		ExternalLink,
+		Sparkles,
+		Tags as TagsIcon,
 	} from 'lucide-svelte';
 
 	// Capture limits (loaded from config, with safe defaults)
@@ -70,6 +71,7 @@
 	let showCustomFields = $state(false);
 	let showImagesPanel = $state(false);
 	let showAiCorrection = $state(false);
+	let tagModalOpen = $state(false);
 	let showThumbnailEditor = $state(false);
 	let isProcessing = $state(false);
 	let allImages = $state<File[]>([]);
@@ -375,11 +377,19 @@
 		}
 	}
 
-	/** Create a suggested tag in Homebox, add it to the store, and apply it to the current item */
-	async function acceptSuggestedTag(name: string) {
+	/**
+	 * Create a new tag in Homebox, add it to the store, and select it on the current item.
+	 * `aiSuggested` marks it as AI-chosen (for the AI-suggested-tags flow) rather than a
+	 * tag the user typed in manually via the tag picker's search box.
+	 */
+	async function createAndSelectTag(name: string, aiSuggested: boolean) {
+		if (!editedItem) return;
 		const newTag = await tagsApi.create({ name });
 		tagStore.addTag(newTag);
 		toggleTag(newTag.id);
+		if (aiSuggested) {
+			editedItem.ai_tag_ids = [...(editedItem.ai_tag_ids ?? []), newTag.id];
+		}
 	}
 
 	/** Handle asset ID changes */
@@ -612,14 +622,33 @@
 					onScannerToggle={(open) => (assetIdScannerOpen = open)}
 				/>
 
-				<!-- Tags with chip selection -->
-				<TagSelector selectedIds={editedItem.tag_ids ?? []} onToggle={toggleTag} />
-
-				<!-- AI-suggested new tags -->
-				<SuggestedTagChips
-					suggestedNames={editedItem.suggested_tags ?? []}
-					onAccept={acceptSuggestedTag}
-				/>
+				<!-- Tags -->
+				<div>
+					<span class="label">Tags</span>
+					<div class="flex flex-wrap items-center gap-2">
+						{#each editedItem.tag_ids ?? [] as tagId (tagId)}
+							{@const tagName = tagStore.getTagName(tagId)}
+							{#if tagName}
+								{@const isAiChosen = (editedItem.ai_tag_ids ?? []).includes(tagId)}
+								<button
+									type="button"
+									class={isAiChosen ? 'label-chip-ai' : 'label-chip-selected'}
+									onclick={() => toggleTag(tagId)}
+									aria-label="Remove tag {tagName}"
+								>
+									{#if isAiChosen}
+										<Sparkles size={12} />
+									{/if}
+									{tagName}
+								</button>
+							{/if}
+						{/each}
+						<button type="button" class="label-chip" onclick={() => (tagModalOpen = true)}>
+							<TagsIcon size={14} />
+							{(editedItem.tag_ids ?? []).length > 0 ? 'Edit Tags' : 'Add Tags'}
+						</button>
+					</div>
+				</div>
 
 				<!-- Extended fields panel -->
 				<ItemExtendedFields
@@ -756,3 +785,16 @@
 	onConfirm={handleConfirmAll}
 	onCancel={() => (showConfirmAllDialog = false)}
 />
+
+<!-- Tag Picker Modal -->
+{#if editedItem}
+	<TagPickerModal
+		bind:open={tagModalOpen}
+		selectedIds={editedItem.tag_ids ?? []}
+		aiTagIds={editedItem.ai_tag_ids ?? []}
+		suggestedNames={editedItem.suggested_tags ?? []}
+		onToggle={toggleTag}
+		onCreateTag={createAndSelectTag}
+		onClose={() => (tagModalOpen = false)}
+	/>
+{/if}

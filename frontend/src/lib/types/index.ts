@@ -146,6 +146,12 @@ export interface ReviewItem extends ItemCore, ItemExtended {
 	duplicate_match?: DuplicateMatch | null;
 	/** AI-suggested new tag names (not yet in Homebox) */
 	suggested_tags?: string[] | null;
+	/**
+	 * Baseline of existing-tag IDs the AI actually chose at detection time
+	 * (before any configured default tag or user edits were applied). Used
+	 * to highlight AI-chosen tags distinctly from manually added ones.
+	 */
+	ai_tag_ids?: string[] | null;
 }
 
 /** Item confirmed by user, ready for submission */

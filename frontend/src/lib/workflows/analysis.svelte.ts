@@ -243,8 +243,10 @@ export class AnalysisService {
 				const additionalCompressed = compressedImages.slice(1);
 
 				for (const [itemIndex, item] of result.items.entries()) {
-					// Add default tag if configured and valid
-					let tagIds = item.tag_ids ?? [];
+					// Add default tag if configured and valid - keep a separate baseline
+					// of what the AI actually chose, before the default tag is mixed in
+					const aiTagIds = item.tag_ids ?? [];
+					let tagIds = aiTagIds;
 					if (validDefaultTagId && !tagIds.includes(validDefaultTagId)) {
 						tagIds = [...tagIds, validDefaultTagId];
 					}
@@ -261,6 +263,7 @@ export class AnalysisService {
 					allDetectedItems.push({
 						...item,
 						tag_ids: tagIds,
+						ai_tag_ids: aiTagIds,
 						sourceImageIndex: result.imageIndex,
 						originalFile: result.image.file,
 						additionalImages: result.image.additionalFiles || [],

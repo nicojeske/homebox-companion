@@ -321,8 +321,10 @@
 				separateItems: false,
 				extraInstructions: '',
 			});
-			// Collapse all expanded accordions when a new image is added
+			// New images are always prepended at index 0 - expand just that one
+			// so the asset ID can be scanned immediately without an extra tap.
 			expandedImages.clear();
+			expandedImages.add(0);
 		} else if (item.imageIndex !== undefined) {
 			workflow.addAdditionalImages(item.imageIndex, [file], [dataUrl]);
 		}
